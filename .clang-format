@@ -1,0 +1,113 @@
+Language: Cpp
+
+# list of all options:
+# https://clang.llvm.org/docs/ClangFormatStyleOptions.html
+
+Standard: c++17
+AccessModifierOffset: -4
+TabWidth: 4
+IndentWidth: 4
+ConstructorInitializerIndentWidth: 4
+UseTab: Never
+
+# jnl this may be shortened, but this will effect a lot of the formatting
+ColumnLimit: 120
+
+#jnl maybe even 0
+SpacesBeforeTrailingComments: 1
+
+# jnl again, not sure what this does
+ContinuationIndentWidth: 0
+
+# jnl maybe think about this, im not sure
+# should be the same
+BinPackArguments: false
+BinPackParameters: false
+
+# jnl maybe think about this, im not sure
+AlwaysBreakAfterReturnType: None
+
+#https://stackoverflow.com/questions/32970045/how-to-prevent-clang-format-to-add-space-after-comment-char
+CommentPragmas:  '^[^ ]'
+
+#https://stackoverflow.com/questions/39858266/using-clang-format-keep-empty-braces-on-the-same-line
+BreakBeforeBraces: Allman
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterCaseLabel: false
+  AfterClass: false
+  AfterControlStatement: Never
+  AfterEnum: false
+  AfterFunction: false
+  AfterNamespace: false
+  AfterStruct: false
+  AfterUnion: false
+  AfterExternBlock: false
+  BeforeCatch: false
+  BeforeElse: false
+#  BeforeLambdaBody: false
+  IndentBraces: false
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+  SplitEmptyNamespace: false
+
+AlignAfterOpenBracket: Align
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignConsecutiveMacros: false
+AlignEscapedNewlines: Left
+AlignOperands: false
+AlignTrailingComments: false
+AllowAllArgumentsOnNextLine: true
+AllowAllConstructorInitializersOnNextLine: true
+AllowAllParametersOfDeclarationOnNextLine: true
+AllowShortBlocksOnASingleLine: Always
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortFunctionsOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: Always
+AllowShortLambdasOnASingleLine: All
+AllowShortLoopsOnASingleLine: true
+#AlwaysBreakAfterDefinitionReturnType
+AlwaysBreakBeforeMultilineStrings: false
+AlwaysBreakTemplateDeclarations: Yes
+BreakBeforeBinaryOperators: NonAssignment
+BreakBeforeTernaryOperators: true
+BreakConstructorInitializers: BeforeComma
+BreakInheritanceList: BeforeComma
+BreakStringLiterals: true
+CompactNamespaces: true
+ConstructorInitializerAllOnOneLineOrOnePerLine: false
+Cpp11BracedListStyle: false
+DeriveLineEnding: false
+DerivePointerAlignment: false
+DisableFormat: false
+FixNamespaceComments: true
+IncludeBlocks: Preserve
+#hmm, this doesn't work for me: IndentCaseBlocks: false
+IndentCaseLabels: false
+IndentPPDirectives: BeforeHash
+IndentWrappedFunctionNames: true
+KeepEmptyLinesAtTheStartOfBlocks: false
+MaxEmptyLinesToKeep: 2
+NamespaceIndentation: All
+PointerAlignment: Left #jnl i'll fight you over this
+ReflowComments: true
+SortIncludes: true
+SortUsingDeclarations: true
+SpaceAfterCStyleCast: false
+SpaceAfterLogicalNot: false
+SpaceAfterTemplateKeyword: false
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeCpp11BracedList: false
+SpaceBeforeParens: Never
+SpaceBeforeRangeBasedForLoopColon: true
+SpaceBeforeSquareBrackets: false
+SpaceInEmptyBlock: true
+SpaceInEmptyParentheses: false
+SpacesInAngles: false
+SpacesInCStyleCastParentheses: false
+#hmm, this doesn't work for me: SpacesInConditionalStatement: false
+SpacesInContainerLiterals: false
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+UseCRLF: false

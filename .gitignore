@@ -5,3 +5,4 @@ max2sphere
 max2spherebatch.o
 *.data
 max2sphere.o
+.vscode
