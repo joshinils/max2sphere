@@ -25,79 +25,7 @@ int ntable = 0;
 int itable = 0;
 
 
-typedef struct {
-    size_t worker_id;
-    pthread_mutex_t* counter_mutex;
-    int* ip_shared_counter;
-} thread_data;
-
-
-void* worker_function(void* input);
-
-int thread_test() {
-    const size_t THREAD_COUNT = 16;
-    pthread_t thread[THREAD_COUNT];
-    thread_data data[THREAD_COUNT];
-
-    pthread_mutex_t mutex_counter = PTHREAD_MUTEX_INITIALIZER;
-    int counter = 100;
-
-    for(size_t i = 0; i < THREAD_COUNT; i++) {
-        // Initialize the thread data
-        data[i].worker_id = i;
-        data[i].counter_mutex = &mutex_counter;
-        data[i].ip_shared_counter = &counter;
-
-        int creating_thread_status = pthread_create(&(thread[i]), NULL, worker_function, (void*)&data[i]);
-        if(creating_thread_status) {
-            fprintf(stderr, "Error creating thread %02li, exiting.\n", i);
-            exit(-1);
-        }
-    }
-
-    for(size_t i = 0; i < THREAD_COUNT; i++) {
-        // Wait till threads are complete before main continues
-        pthread_join(thread[i], NULL);
-        printf("Thread: %02li done\n", i);
-    }
-    exit(0);
-}
-
-void print_message_function(thread_data* data, int todo_id) {
-    printf("Thread: %02li working for %d\n", data->worker_id, todo_id);
-    usleep(todo_id);
-    printf("Thread: %02li    finished %d\n", data->worker_id, todo_id);
-}
-
-
-void* worker_function(void* input) {
-    // Cast the pointer to the correct type
-    thread_data* data = (thread_data*)input;
-
-    for(;;) {
-        pthread_mutex_lock(data->counter_mutex);
-        printf("Thread: %02li counter pre: %d\n", data->worker_id, *data->ip_shared_counter);
-        int work_time = *(data->ip_shared_counter);
-        (*(data->ip_shared_counter))--;
-        printf("Thread: %02li counter post: %d\n", data->worker_id, *data->ip_shared_counter);
-        pthread_mutex_unlock(data->counter_mutex);
-
-        if(work_time <= 0) { break; }
-
-        print_message_function(data, work_time);
-        printf("Thread: %02li finished job %d\n", data->worker_id, work_time);
-    }
-    printf("Thread: %02li finished all jobs\n", data->worker_id);
-
-    return NULL;
-}
-
-
 int main(int argc, char** argv) {
-    thread_test();
-    return 0;
-
-
     char tablename[256];
     double x, y, dx, dy, x0, y0, longitude, latitude;
     FILE* fptr;
@@ -106,7 +34,11 @@ int main(int argc, char** argv) {
     Init();
 
     // Check and parse command line
-    if(argc < 2) GiveUsage(argv[0]);
+    if(argc < 2) {
+        GiveUsage(argv[0]);
+        exit(-1);
+    }
+
     for(int i = 1; i < argc - 1; i++) {
         if(strcmp(argv[i], "-w") == 0) {
             params.outwidth = atoi(argv[i + 1]);
@@ -123,6 +55,8 @@ int main(int argc, char** argv) {
             params.nstop = atoi(argv[i + 1]);
         } else if(strcmp(argv[i], "-d") == 0) {
             params.debug = TRUE;
+        } else if(strcmp(argv[i], "-t") == 0) {
+            params.threads = atoi(argv[i + 1]);
         }
     }
 
@@ -188,12 +122,63 @@ int main(int argc, char** argv) {
         fclose(fptr);
     }
 
-    // Process each frame of the sequence
-    for(int nframe = params.nstart; nframe <= params.nstop; nframe++) {
-        process_single_image(nframe, argv[0], argv[argc - 1]);
+
+    pthread_t thread[params.threads];
+    THREAD_DATA data[params.threads];
+
+    pthread_mutex_t mutex_counter = PTHREAD_MUTEX_INITIALIZER;
+    int shared_counter = params.nstart;
+
+    for(size_t i = 0; i < params.threads; i++) {
+        // Initialize the thread data
+        data[i].worker_id = i;
+        data[i].counter_mutex = &mutex_counter;
+        data[i].ip_shared_counter = &shared_counter;
+        data[i].progName = argv[0];
+        data[i].last_argument = argv[argc - 1];
+
+        int creating_thread_status = pthread_create(&(thread[i]), NULL, worker_function, (void*)&data[i]);
+        if(creating_thread_status) {
+            fprintf(stderr, "Error creating thread %02li, exiting.\n", i);
+            exit(-1);
+        }
+    }
+
+    for(size_t i = 0; i < params.threads; i++) {
+        // Wait till threads are complete before main continues
+        pthread_join(thread[i], NULL);
+        printf("Thread: %02li done\n", i);
     }
 
     exit(0);
+}
+
+
+void* worker_function(void* input) {
+    // Cast the pointer to the correct type
+    THREAD_DATA* data = (THREAD_DATA*)input;
+
+    for(;;) {
+        pthread_mutex_lock(data->counter_mutex);
+        printf("Thread: %02li counter  pre: %d\n", data->worker_id, *data->ip_shared_counter);
+        int nframe = *(data->ip_shared_counter);
+        (*(data->ip_shared_counter))++;
+        printf("Thread: %02li counter post: %d\n", data->worker_id, *data->ip_shared_counter);
+        pthread_mutex_unlock(data->counter_mutex);
+
+        if(nframe <= params.nstop) { break; }
+
+        printf("Thread: %02li working for %d\n", data->worker_id, nframe);
+        // process_single_image(data, nframe);
+        sleep(1);  // instead of actually processing the image, test by sleeping
+        printf("Thread: %02li    finished %d\n", data->worker_id, nframe);
+
+
+        printf("Thread: %02li finished job %d\n", data->worker_id, nframe);
+    }
+    printf("Thread: %02li finished all jobs\n", data->worker_id);
+
+    return NULL;
 }
 
 
@@ -203,9 +188,9 @@ void set_frame_filename_from_template(char* fname1, char* fname2, int nframe, co
 }
 
 
-void process_single_image(int nframe, const char* progName, const char* last_argument) {
+void process_single_image(THREAD_DATA* data, int nframe) {
     char fname1[256], fname2[256];
-    set_frame_filename_from_template(fname1, fname2, nframe, last_argument);
+    set_frame_filename_from_template(fname1, fname2, nframe, data->last_argument);
 
     // Malloc images
     BITMAP4* frame_input1 = Create_Bitmap(params.framewidth, params.frameheight);
@@ -213,22 +198,22 @@ void process_single_image(int nframe, const char* progName, const char* last_arg
     BITMAP4* frame_spherical = Create_Bitmap(params.outwidth, params.outheight);
 
     if(frame_input1 == NULL || frame_input2 == NULL || frame_spherical == NULL) {
-        fprintf(stderr, "%s() - Failed to malloc memory for the images\n", progName);
+        fprintf(stderr, "%s() - Failed to malloc memory for the images\n", data->progName);
         exit(-1);
     }
 
     // Form the spherical map
-    if(params.debug) fprintf(stderr, "%s() - Creating spherical map for frame %d\n", progName, nframe);
+    if(params.debug) fprintf(stderr, "%s() - Creating spherical map for frame %d\n", data->progName, nframe);
     BITMAP4 black = { 0, 0, 0, 255 };
     Erase_Bitmap(frame_spherical, params.outwidth, params.outheight, black);
 
     // Read both frames
     if(!ReadFrame(frame_input1, fname1, params.framewidth, params.frameheight)) {
-        if(params.debug) fprintf(stderr, "%s() - failed to read frame \"%s\"\n", progName, fname2);
+        if(params.debug) fprintf(stderr, "%s() - failed to read frame \"%s\"\n", data->progName, fname2);
         return;
     }
     if(!ReadFrame(frame_input2, fname2, params.framewidth, params.frameheight)) {
-        if(params.debug) fprintf(stderr, "%s() - failed to read frame \"%s\"\n", progName, fname2);
+        if(params.debug) fprintf(stderr, "%s() - failed to read frame \"%s\"\n", data->progName, fname2);
         return;
     }
 
@@ -274,11 +259,11 @@ void process_single_image(int nframe, const char* progName, const char* last_arg
         }
     }
 
-    if(params.debug) { fprintf(stderr, "%s() - Processing time: %g seconds\n", progName, GetRunTime() - starttime); }
+    if(params.debug) { fprintf(stderr, "%s() - Processing time: %g seconds\n", data->progName, GetRunTime() - starttime); }
 
     // Write out the equirectangular
     // Base the name on the name of the first frame
-    if(params.debug) fprintf(stderr, "%s() - Saving equirectangular\n", progName);
+    if(params.debug) fprintf(stderr, "%s() - Saving equirectangular\n", data->progName);
     WriteSpherical(fname1, nframe, frame_spherical, params.outwidth, params.outheight);
 }
 
@@ -741,6 +726,6 @@ void GiveUsage(char* s) {
     fprintf(stderr, "             If specified then it should contain one %%d field for the frame number\n");
     fprintf(stderr, "   -n n      Start index for the sequence, default: %d\n", params.nstart);
     fprintf(stderr, "   -m n      End index for the sequence, default: %d\n", params.nstop);
+    fprintf(stderr, "   -t        Amount of threads to use\n");
     fprintf(stderr, "   -d        Enable debug mode, default: off\n");
-    exit(-1);
 }
