@@ -1,4 +1,5 @@
 #include "max2sphere.h"
+#include <unistd.h> // TODO: remove, gives sleep and unisleep
 /*
     Convert a sequence of pairs of frames from the GoPro Max camera to an equirectangular
     Sept 08: First version based upon cube2sphere
@@ -23,7 +24,55 @@ LLTABLE* lltable = NULL;
 int ntable = 0;
 int itable = 0;
 
+
+// Define a struct to hold the thread data
+struct thread_data_t {
+    char* message;
+    int sleep_time;
+};
+
+void* print_message_function(void* ptr);
+
+int thread_test() {
+    pthread_t thread1, thread2;
+    struct thread_data_t data1, data2;
+    int iret1, iret2;
+
+    // Initialize the thread data
+    data1.message = "Thread A";
+    data1.sleep_time = 2;
+    data2.message = "Thread B";
+    data2.sleep_time = 1;
+
+    // Create independent threads each of which will execute function
+    iret1 = pthread_create(&thread1, NULL, print_message_function, (void*)&data1);
+    iret2 = pthread_create(&thread2, NULL, print_message_function, (void*)&data2);
+
+    // Wait till threads are complete before main continues
+    pthread_join(thread1, NULL);
+    pthread_join(thread2, NULL);
+
+    printf("Thread 1 returns: %d\n", iret1);
+    printf("Thread 2 returns: %d\n", iret2);
+    exit(0);
+}
+
+
+void* print_message_function(void* ptr) {
+    // Cast the pointer to the correct type
+    struct thread_data_t* data = (struct thread_data_t*)ptr;
+
+    sleep(data->sleep_time);
+    // Access the data
+    printf("sleep time: %d, Message: %s\n", data->sleep_time, data->message);
+}
+
+
 int main(int argc, char** argv) {
+    thread_test();
+    return 0;
+
+
     char tablename[256];
     double x, y, dx, dy, x0, y0, longitude, latitude;
     FILE* fptr;
