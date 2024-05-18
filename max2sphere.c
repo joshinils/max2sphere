@@ -72,7 +72,8 @@ int main(int argc, char** argv) {
     // Check the first frame to determine template and frame sizes
     sprintf(fname1, argv[argc - 1], 0, params.nstart);
     sprintf(fname2, argv[argc - 1], 5, params.nstart);
-    if((whichtemplate = CheckFrames(fname1, fname2, &params.framewidth, &params.frameheight)) < 0) exit(-1);
+    if((whichtemplate = CheckFrames(fname1, fname2, &params.framewidth, &params.frameheight)) < 0)
+        exit(-1);
     if(params.debug) {
         fprintf(stderr, "%s() - frame dimensions: %d x %d\n", argv[0], params.framewidth, params.frameheight);
         fprintf(stderr, "%s() - Expect frame template %d\n", argv[0], whichtemplate + 1);
@@ -205,26 +206,33 @@ int main(int argc, char** argv) {
 /*
     Check the frames
     - do they exist
-    - are they jpeg
+    - are they jpeg or png
     - are they the same size
     - determine which frame template we are using
 */
-int CheckFrames(char* fname1, char* fname2, int* width, int* height) {
-    int i, n = -1;
-    int w1, h1, w2, h2, depth;
-    FILE* fptr;
+int CheckFrames(const char* fname1, const char* fname2, int* width, int* height) {
+    boolean frame1_is_jpg = IsJPEG(fname1);
+    boolean frame2_is_jpg = IsJPEG(fname2);
+    boolean frame1_is_png = IsPNG(fname1);
+    boolean frame2_is_png = IsPNG(fname2);
 
-    if(!IsJPEG(fname1) || !IsJPEG(fname2)) {
-        fprintf(stderr, "CheckFrames() - frame name does not look like a jpeg file\n");
+    if(!frame1_is_jpg && !frame1_is_png || !frame2_is_jpg && !frame2_is_png) {
+        fprintf(stderr, "CheckFrames() - frame name does not look like a jpeg or png file\n");
         return (-1);
     }
 
+    FILE* fptr;
     // Frame 1
     if((fptr = fopen(fname1, "rb")) == NULL) {
         fprintf(stderr, "CheckFrames() - Failed to open first frame \"%s\"\n", fname1);
         return (-1);
     }
-    JPEG_Info(fptr, &w1, &h1, &depth);
+    int w1, h1, depth;
+    if(frame1_is_jpg) {
+        JPEG_Info(fptr, &w1, &h1, &depth);
+    } else {
+        PNG_Info(fptr, &w1, &h1, &depth);
+    }
     fclose(fptr);
 
     // Frame 2
@@ -232,7 +240,12 @@ int CheckFrames(char* fname1, char* fname2, int* width, int* height) {
         fprintf(stderr, "CheckFrames() - Failed to open second frame \"%s\"\n", fname2);
         return (-1);
     }
-    JPEG_Info(fptr, &w2, &h2, &depth);
+    int w2, h2;
+    if(frame1_is_jpg) {
+        JPEG_Info(fptr, &w1, &h1, &depth);
+    } else {
+        PNG_Info(fptr, &w1, &h1, &depth);
+    }
     fclose(fptr);
 
     // Are they the same size
@@ -241,14 +254,15 @@ int CheckFrames(char* fname1, char* fname2, int* width, int* height) {
         return (-1);
     }
 
+    int template_n = -1;
     // Is it a known template?
-    for(i = 0; i < NTEMPLATE; i++) {
+    for(int i = 0; i < NTEMPLATE; i++) {
         if(w1 == template[i].width && h1 == template[i].height) {
-            n = i;
+            template_n = i;
             break;
         }
     }
-    if(n < 0) {
+    if(template_n < 0) {
         fprintf(stderr, "CheckFrames() - No recognised frame template\n");
         return (-1);
     }
@@ -256,8 +270,9 @@ int CheckFrames(char* fname1, char* fname2, int* width, int* height) {
     *width = w1;
     *height = h1;
 
-    return (n);
+    return template_n;
 }
+
 
 /*
    Write spherical image
@@ -278,7 +293,7 @@ int WriteSpherical(char* basename, int nframe, BITMAP4* img, int w, int h) {
                 break;
             }
         }
-        strcat(fname, "_sphere.jpg");
+        strcat(fname, "_sphere.png");
     } else {
         sprintf(fname, params.outfilename, nframe);
     }
@@ -290,7 +305,7 @@ int WriteSpherical(char* basename, int nframe, BITMAP4* img, int w, int h) {
         fprintf(stderr, "WriteSpherical() - Failed to open output file \"%s\"\n", fname);
         return (FALSE);
     }
-    JPEG_Write(fptr, img, w, h, 100);
+    PNG_Write(fptr, img, w, h, 100);
     fclose(fptr);
 
     return (TRUE);
@@ -311,8 +326,8 @@ int ReadFrame(BITMAP4* img, char* fname, int w, int h) {
     }
 
     // Read image data
-    if(JPEG_Read(fptr, img, &w, &h) != 0) {
-        fprintf(stderr, "ReadFrame() - Failed to correctly read JPG file \"%s\"\n", fname);
+    if(isJPEG(fname) && JPEG_Read(fptr, img, &w, &h) != 0 || isPNG(fname) && PNG_Read(fptr, img, &w, &h) != 0) {
+        fprintf(stderr, "ReadFrame() - Failed to correctly read JPG/PNG file \"%s\"\n", fname);
         return (FALSE);
     }
     fclose(fptr);
@@ -632,16 +647,17 @@ void GiveUsage(char* s) {
     fprintf(stderr, "\n");
     fprintf(stderr, "The sequence filename template should contain two %%d entries. The first will be populated\n");
     fprintf(stderr, "with the track number 0 or 5, the second is the frame sequence number, see -n and -m below.\n");
-    fprintf(stderr, "So for example, if there are 1000 frames called track0_frame0001.jpg, track5_0001.jpg, ...\n");
+    fprintf(stderr, "So for example, if there are 1000 frames called track0_frame0001.png, track5_0001.png, ...\n");
     fprintf(stderr, "then the program might be called as follows:\n");
-    fprintf(stderr, "   %s -w 4096 -n 1 -m 1000 track%%d_frame%%04d.jpg\n", s);
-    fprintf(stderr, "Or if directories are used with frames track0/frame1.jpg, track5/1000.jpg, ...\n");
-    fprintf(stderr, "   %s -w 4096 -n 1 -m 1000 track%%d/frame%%4d.jpg\n", s);
+    fprintf(stderr, "   %s -w 4096 -n 1 -m 1000 track%%d_frame%%04d.png\n", s);
+    fprintf(stderr, "Or if directories are used with frames track0/frame1.png, track5/1000.png, ...\n");
+    fprintf(stderr, "   %s -w 4096 -n 1 -m 1000 track%%d/frame%%4d.png\n", s);
     fprintf(stderr, "\n");
     fprintf(stderr, "Options\n");
     fprintf(stderr, "   -w n      Sets the output image width, default: %d\n", params.outwidth);
     fprintf(stderr, "   -a n      Sets antialiasing level, default = %d\n", params.antialias);
-    fprintf(stderr, "   -o s      Specify the output filename template, default is based on track 0 name uses track 2\n");
+    fprintf(stderr,
+            "   -o s      Specify the output filename template, default is based on track 0 name uses track 2\n");
     fprintf(stderr, "             If specified then it should contain one %%d field for the frame number\n");
     fprintf(stderr, "   -n n      Start index for the sequence, default: %d\n", params.nstart);
     fprintf(stderr, "   -m n      End index for the sequence, default: %d\n", params.nstop);

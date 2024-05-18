@@ -45,7 +45,7 @@ typedef struct {
 } FRAMESPECS;
 
 // Prototypes
-int CheckFrames(char*, char*, int*, int*);
+int CheckFrames(const char*, const char*, int*, int*);
 int WriteSpherical(char*, int, BITMAP4*, int, int);
 int ReadFrame(BITMAP4*, char*, int, int);
 int FindFaceUV(double, double, UV*);
