@@ -46,7 +46,7 @@ typedef struct {
 
 // Prototypes
 void set_frame_filename_from_template(char*, char*, int, char*);
-void process_single_image(int, char*, char*, char*);
+void process_single_image(int, const char*, const char*);
 int CheckFrames(const char*, const char*, int*, int*);
 int WriteSpherical(char*, int, BITMAP4*, int, int);
 int ReadFrame(BITMAP4*, char*, int, int);

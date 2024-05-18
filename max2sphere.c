@@ -116,9 +116,7 @@ int main(int argc, char** argv) {
 
     // Process each frame of the sequence
     for(int nframe = params.nstart; nframe <= params.nstop; nframe++) {
-        char fname1[256], fname2[256];
-        set_frame_filename_from_template(fname1, fname2, nframe, argv[argc - 1]);
-        process_single_image(nframe, fname1, fname2, argv[0]);
+        process_single_image(fname2, argv[0], argv[argc - 1]);
     }
 
     exit(0);
@@ -131,7 +129,10 @@ void set_frame_filename_from_template(char* fname1, char* fname2, int nframe, ch
 }
 
 
-void process_single_image(int nframe, char* fname1, char* fname2, char* progName) {
+void process_single_image(int nframe, const char* progName, const char* last_argument) {
+    char fname1[256], fname2[256];
+    set_frame_filename_from_template(fname1, fname2, nframe, last_argument);
+
     // Malloc images
     BITMAP4* frame_input1 = Create_Bitmap(params.framewidth, params.frameheight);
     BITMAP4* frame_input2 = Create_Bitmap(params.framewidth, params.frameheight);
@@ -232,7 +233,7 @@ int CheckFrames(const char* fname1, const char* fname2, int* width, int* height)
         fprintf(stderr, "CheckFrames() - Failed to open first frame \"%s\"\n", fname1);
         return (-1);
     }
-    int w1, h1, depth;
+    int w1, h1, depth = -1;
     if(frame1_is_jpg) {
         JPEG_Info(fptr, &w1, &h1, &depth);
     } else {
@@ -245,7 +246,7 @@ int CheckFrames(const char* fname1, const char* fname2, int* width, int* height)
         fprintf(stderr, "CheckFrames() - Failed to open second frame \"%s\"\n", fname2);
         return (-1);
     }
-    int w2, h2;
+    int w2, h2 = -1;
     if(frame1_is_jpg) {
         JPEG_Info(fptr, &w1, &h1, &depth);
     } else {
@@ -331,7 +332,7 @@ int ReadFrame(BITMAP4* img, char* fname, int w, int h) {
     }
 
     // Read image data
-    if(isJPEG(fname) && JPEG_Read(fptr, img, &w, &h) != 0 || isPNG(fname) && PNG_Read(fptr, img, &w, &h) != 0) {
+    if(IsJPEG(fname) && JPEG_Read(fptr, img, &w, &h) != 0 || IsPNG(fname) && PNG_Read(fptr, img, &w, &h) != 0) {
         fprintf(stderr, "ReadFrame() - Failed to correctly read JPG/PNG file \"%s\"\n", fname);
         return (FALSE);
     }

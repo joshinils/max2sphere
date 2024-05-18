@@ -836,11 +836,10 @@ void Flip_Bitmap(BITMAP4 *image,int width,int height,int mode)
 
 int IsTGA(char *fname)
 {
-   int i;
    char s[256];
 
    strcpy(s,fname);
-   for (i=0;i<strlen(s);i++)
+   for (size_t i=0;i<strlen(s);i++)
       if (s[i] >= 'A' && s[i] <= 'Z')
          s[i] += ('a' - 'A');
 
@@ -1088,11 +1087,10 @@ void TGA_MergeBytes(BITMAP4 *pixel,unsigned char *p,int bytes)
 */
 int IsPPM(char *fname)
 {  
-   int i;
    char s[256];
    
    strcpy(s,fname);
-   for (i=0;i<strlen(s);i++)
+   for (size_t i=0;i<strlen(s);i++)
       if (s[i] >= 'A' && s[i] <= 'Z')
          s[i] += ('a' - 'A');
    
@@ -1411,11 +1409,10 @@ int BMP_Read(FILE *fptr,BITMAP4 *image,int *width,int *height)
 
 int IsRAW(char *fname)
 {
-   int i;
    char s[256];
 
    strcpy(s,fname);
-   for (i=0;i<strlen(s);i++)
+   for (size_t i=0;i<strlen(s);i++)
       if (s[i] >= 'A' && s[i] <= 'Z')
          s[i] += ('a' - 'A');
 
@@ -1539,11 +1536,10 @@ int Read_UInt(FILE *fptr,unsigned int *n,int swap)
 #ifdef ADDJPEG
 int IsJPEG(char *fname)
 {
-   int i;
    char s[256];
 
    strcpy(s,fname);
-   for (i=0;i<strlen(s);i++)
+   for (size_t i=0;i<strlen(s);i++)
       if (s[i] >= 'A' && s[i] <= 'Z')
          s[i] += ('a' - 'A');
 
@@ -1670,7 +1666,7 @@ int JPEG_Info(FILE *fptr,int *width,int *height,int *depth)
 */
 int JPEG_Read(FILE *fptr,BITMAP4 *image,int *width,int *height)
 {
-   int i,j;
+   int j;
    int row_stride;
    struct jpeg_decompress_struct cinfo;
    struct jpeg_error_mgr jerr;
@@ -1701,7 +1697,7 @@ int JPEG_Read(FILE *fptr,BITMAP4 *image,int *width,int *height)
    j = cinfo.output_height-1;
    while (cinfo.output_scanline < cinfo.output_height) {
       jpeg_read_scanlines(&cinfo,&buffer,1);
-      for (i=0;i<cinfo.output_width;i++) {
+      for (size_t i=0;i<cinfo.output_width;i++) {
          image[j*cinfo.output_width+i].r = buffer[3*i];
          image[j*cinfo.output_width+i].g = buffer[3*i+1];
          image[j*cinfo.output_width+i].b = buffer[3*i+2];
@@ -1722,11 +1718,10 @@ int JPEG_Read(FILE *fptr,BITMAP4 *image,int *width,int *height)
 #ifdef ADDPNG
 int IsPNG(char *fname)
 {
-   int i;
    char s[256];
 
    strcpy(s,fname);
-   for (i=0;i<strlen(s);i++)
+   for (size_t i=0;i<strlen(s);i++)
       if (s[i] >= 'A' && s[i] <= 'Z')
          s[i] += ('a' - 'A');
 
