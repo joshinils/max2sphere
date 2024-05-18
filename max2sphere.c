@@ -25,46 +25,71 @@ int ntable = 0;
 int itable = 0;
 
 
-// Define a struct to hold the thread data
-struct thread_data_t {
-    char* message;
-    int sleep_time;
-};
+typedef struct {
+    size_t worker_id;
+    pthread_mutex_t* counter_mutex;
+    int* ip_shared_counter;
+} thread_data;
 
-void* print_message_function(void* ptr);
+
+void* worker_function(void* input);
 
 int thread_test() {
-    pthread_t thread1, thread2;
-    struct thread_data_t data1, data2;
-    int iret1, iret2;
+    const size_t THREAD_COUNT = 16;
+    pthread_t thread[THREAD_COUNT];
+    thread_data data[THREAD_COUNT];
 
-    // Initialize the thread data
-    data1.message = "Thread A";
-    data1.sleep_time = 2;
-    data2.message = "Thread B";
-    data2.sleep_time = 1;
+    pthread_mutex_t mutex_counter = PTHREAD_MUTEX_INITIALIZER;
+    int counter = 100;
 
-    // Create independent threads each of which will execute function
-    iret1 = pthread_create(&thread1, NULL, print_message_function, (void*)&data1);
-    iret2 = pthread_create(&thread2, NULL, print_message_function, (void*)&data2);
+    for(size_t i = 0; i < THREAD_COUNT; i++) {
+        // Initialize the thread data
+        data[i].worker_id = i;
+        data[i].counter_mutex = &mutex_counter;
+        data[i].ip_shared_counter = &counter;
 
-    // Wait till threads are complete before main continues
-    pthread_join(thread1, NULL);
-    pthread_join(thread2, NULL);
+        int creating_thread_status = pthread_create(&(thread[i]), NULL, worker_function, (void*)&data[i]);
+        if(creating_thread_status) {
+            fprintf(stderr, "Error creating thread %02li, exiting.\n", i);
+            exit(-1);
+        }
+    }
 
-    printf("Thread 1 returns: %d\n", iret1);
-    printf("Thread 2 returns: %d\n", iret2);
+    for(size_t i = 0; i < THREAD_COUNT; i++) {
+        // Wait till threads are complete before main continues
+        pthread_join(thread[i], NULL);
+        printf("Thread: %02li done\n", i);
+    }
     exit(0);
 }
 
+void print_message_function(thread_data* data, int todo_id) {
+    printf("Thread: %02li working for %d\n", data->worker_id, todo_id);
+    usleep(todo_id);
+    printf("Thread: %02li    finished %d\n", data->worker_id, todo_id);
+}
 
-void* print_message_function(void* ptr) {
+
+void* worker_function(void* input) {
     // Cast the pointer to the correct type
-    struct thread_data_t* data = (struct thread_data_t*)ptr;
+    thread_data* data = (thread_data*)input;
 
-    sleep(data->sleep_time);
-    // Access the data
-    printf("sleep time: %d, Message: %s\n", data->sleep_time, data->message);
+    for(;;) {
+        pthread_mutex_lock(data->counter_mutex);
+        printf("Thread: %02li counter pre: %d\n", data->worker_id, *data->ip_shared_counter);
+        int work_time = *(data->ip_shared_counter);
+        (*(data->ip_shared_counter))--;
+        printf("Thread: %02li counter post: %d\n", data->worker_id, *data->ip_shared_counter);
+        pthread_mutex_unlock(data->counter_mutex);
+
+        if(work_time <= 0) { break; }
+
+        print_message_function(data, work_time);
+        printf("Thread: %02li finished job %d\n", data->worker_id, work_time);
+    }
+    printf("Thread: %02li finished all jobs\n", data->worker_id);
+
+    return NULL;
 }
 
 
