@@ -1,8 +1,8 @@
 CC = gcc
-CFLAGS = -g3 -Wall -Wextra -fPIC -DREPLICATION_ENABLED -DJOURNALING_ENABLED -m64
-INCLUDES = -I/usr/include -I/opt/homebrew/include -I/opt/homebrew/opt/jpeg/include
-LFLAGS = -L/usr/lib -L/opt/homebrew/lib -L/opt/homebrew/opt/jpeg/lib
-LIBS = -ljpeg -lm
+CFLAGS = -g3 -Wall -Wextra -fPIC -DREPLICATION_ENABLED -DJOURNALING_ENABLED -m64 -O3
+INCLUDES = -I/usr/include -I/opt/homebrew/include -I/opt/homebrew/opt/jpeg/include -I/opt/homebrew/opt/png/include
+LFLAGS = -L/usr/lib -L/opt/homebrew/lib -L/opt/homebrew/opt/jpeg/lib -L/opt/homebrew/opt/png/lib
+LIBS = -ljpeg -lm -lpng
 
 OBJS = max2sphere.o bitmaplib.o
 

@@ -4,9 +4,9 @@
 #include <math.h>
 
 // Choose formats with external support required
-#define ADDJPEG 
-//#define ADDPNG 
-//#define ADDTIFF 
+#define ADDJPEG
+#define ADDPNG
+//#define ADDTIFF
 //#define ADDEXR
 
 #ifdef ADDJPEG
