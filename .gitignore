@@ -5,6 +5,5 @@ max2sphere
 *.data
 .vscode
 testframes
-track0
-track4
-track5
+track*
+out

@@ -1398,7 +1398,7 @@ int Read_UInt(FILE* fptr, unsigned int* n, int swap) {
 }
 
 #ifdef ADDJPEG
-int IsJPEG(const char* fname) {
+boolean IsJPEG(const char* fname) {
     char s[256];
 
     strcpy(s, fname);
@@ -1565,7 +1565,7 @@ int JPEG_Read(FILE* fptr, BITMAP4* image, int* width, int* height) {
 #endif
 
 #ifdef ADDPNG
-int IsPNG(const char* fname) {
+boolean IsPNG(const char* fname) {
     char s[256];
 
     strcpy(s, fname);

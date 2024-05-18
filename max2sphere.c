@@ -1,7 +1,7 @@
 #include "max2sphere.h"
-#include <unistd.h> // TODO: remove, gives sleep and unisleep
+#include <unistd.h>
 /*
-    Convert a sequence of pairs of frames from the GoPro Max camera to an equirectangular
+    Convert a sequence of pairs of frames from the GoPro MAX camera to an equirectangular
     Sept 08: First version based upon cube2sphere
     Sept 10: Added output file mask
    Dec  14: This version which is a batch converter based upon a lookup table
@@ -50,13 +50,13 @@ int main(int argc, char** argv) {
         } else if(strcmp(argv[i], "-o") == 0) {
             strcpy(params.outfilename, argv[i + 1]);
         } else if(strcmp(argv[i], "-n") == 0) {
-            params.nstart = atoi(argv[i + 1]);
+            params.nstart = MAX(0, atoi(argv[i + 1]));
         } else if(strcmp(argv[i], "-m") == 0) {
-            params.nstop = atoi(argv[i + 1]);
+            params.nstop = MAX(0, atoi(argv[i + 1]));
         } else if(strcmp(argv[i], "-d") == 0) {
             params.debug = TRUE;
         } else if(strcmp(argv[i], "-t") == 0) {
-            params.threads = atoi(argv[i + 1]);
+            params.threads = MAX(1, atoi(argv[i + 1]));
         }
     }
 
@@ -70,8 +70,13 @@ int main(int argc, char** argv) {
 
 
     char fname1[256], fname2[256];
+
+
     // Check the first frame to determine template and frame sizes
     set_frame_filename_from_template(fname1, fname2, params.nstart, argv[argc - 1]);
+    // sprintf(fname1, argv[argc - 1], 0, params.nstart);
+    // sprintf(fname2, argv[argc - 1], 5, params.nstart);
+    // if(params.debug) fprintf(stderr, "fname1=%s fname2=%s\n", fname1, fname2);
     if((whichtemplate = CheckFrames(fname1, fname2, &params.framewidth, &params.frameheight)) < 0) exit(-1);
     if(params.debug) {
         fprintf(stderr, "%s() - frame dimensions: %d x %d\n", argv[0], params.framewidth, params.frameheight);
@@ -123,24 +128,29 @@ int main(int argc, char** argv) {
     }
 
 
+    if(params.debug) fprintf(stderr, "%s() - Starting threads\n", argv[0]);
+
     pthread_t thread[params.threads];
     THREAD_DATA data[params.threads];
 
     pthread_mutex_t mutex_counter = PTHREAD_MUTEX_INITIALIZER;
     int shared_counter = params.nstart;
 
-    for(size_t i = 0; i < params.threads; i++) {
+    for(size_t thread_id = 0; thread_id < params.threads; thread_id++) {
         // Initialize the thread data
-        data[i].worker_id = i;
-        data[i].counter_mutex = &mutex_counter;
-        data[i].ip_shared_counter = &shared_counter;
-        data[i].progName = argv[0];
-        data[i].last_argument = argv[argc - 1];
+        data[thread_id].worker_id = thread_id;
+        data[thread_id].counter_mutex = &mutex_counter;
+        data[thread_id].ip_shared_counter = &shared_counter;
+        data[thread_id].progName = argv[0];
+        data[thread_id].last_argument = argv[argc - 1];
 
-        int creating_thread_status = pthread_create(&(thread[i]), NULL, worker_function, (void*)&data[i]);
+        int creating_thread_status =
+        pthread_create(&(thread[thread_id]), NULL, worker_function, (void*)&data[thread_id]);
         if(creating_thread_status) {
-            fprintf(stderr, "Error creating thread %02li, exiting.\n", i);
+            fprintf(stderr, "Error creating thread %02li, exiting.\n", thread_id);
             exit(-1);
+        } else if(params.debug) {
+            fprintf(stderr, "%s() - Started Thread %02li\n", argv[0], thread_id);
         }
     }
 
@@ -154,37 +164,31 @@ int main(int argc, char** argv) {
 }
 
 
+void set_frame_filename_from_template(char* fname1, char* fname2, int nframe, const char* last_argument) {
+    sprintf(fname1, last_argument, 0, nframe);
+    sprintf(fname2, last_argument, 5, nframe);
+}
+
+
 void* worker_function(void* input) {
     // Cast the pointer to the correct type
     THREAD_DATA* data = (THREAD_DATA*)input;
 
     for(;;) {
         pthread_mutex_lock(data->counter_mutex);
-        printf("Thread: %02li counter  pre: %d\n", data->worker_id, *data->ip_shared_counter);
-        int nframe = *(data->ip_shared_counter);
+        size_t nframe = *(data->ip_shared_counter);
         (*(data->ip_shared_counter))++;
-        printf("Thread: %02li counter post: %d\n", data->worker_id, *data->ip_shared_counter);
         pthread_mutex_unlock(data->counter_mutex);
 
-        if(nframe <= params.nstop) { break; }
+        if(nframe > params.nstop) { break; }
 
-        printf("Thread: %02li working for %d\n", data->worker_id, nframe);
-        // process_single_image(data, nframe);
-        sleep(1);  // instead of actually processing the image, test by sleeping
-        printf("Thread: %02li    finished %d\n", data->worker_id, nframe);
-
-
-        printf("Thread: %02li finished job %d\n", data->worker_id, nframe);
+        printf("%s() T%02li starting job %li\n", data->progName, data->worker_id, nframe);
+        process_single_image(data, nframe);
+        printf("%s() T%02li finished job %li\n", data->progName, data->worker_id, nframe);
     }
-    printf("Thread: %02li finished all jobs\n", data->worker_id);
+    printf("%s() T%02li - finished all jobs\n", data->progName, data->worker_id);
 
     return NULL;
-}
-
-
-void set_frame_filename_from_template(char* fname1, char* fname2, int nframe, const char* last_argument) {
-    sprintf(fname1, last_argument, 0, nframe);
-    sprintf(fname2, last_argument, 5, nframe);
 }
 
 
@@ -198,27 +202,31 @@ void process_single_image(THREAD_DATA* data, int nframe) {
     BITMAP4* frame_spherical = Create_Bitmap(params.outwidth, params.outheight);
 
     if(frame_input1 == NULL || frame_input2 == NULL || frame_spherical == NULL) {
-        fprintf(stderr, "%s() - Failed to malloc memory for the images\n", data->progName);
+        fprintf(stderr, "%s() T%02li - Failed to malloc memory for the images\n", data->progName, data->worker_id);
         exit(-1);
     }
 
     // Form the spherical map
-    if(params.debug) fprintf(stderr, "%s() - Creating spherical map for frame %d\n", data->progName, nframe);
+    if(params.debug)
+        fprintf(stderr, "%s() T%02li - Creating spherical map for frame %d\n", data->progName, data->worker_id, nframe);
     BITMAP4 black = { 0, 0, 0, 255 };
     Erase_Bitmap(frame_spherical, params.outwidth, params.outheight, black);
 
     // Read both frames
     if(!ReadFrame(frame_input1, fname1, params.framewidth, params.frameheight)) {
-        if(params.debug) fprintf(stderr, "%s() - failed to read frame \"%s\"\n", data->progName, fname2);
+        if(params.debug)
+            fprintf(stderr, "%s() T%02li - failed to read frame \"%s\"\n", data->progName, data->worker_id, fname2);
         return;
     }
+
     if(!ReadFrame(frame_input2, fname2, params.framewidth, params.frameheight)) {
-        if(params.debug) fprintf(stderr, "%s() - failed to read frame \"%s\"\n", data->progName, fname2);
+        if(params.debug)
+            fprintf(stderr, "%s() T%02li - failed to read frame \"%s\"\n", data->progName, data->worker_id, fname2);
         return;
     }
 
     double starttime = GetRunTime();
-    itable = 0;
+    int itable = 0;
     for(int j = 0; j < params.outheight; j++) {
         //y0 = j / (double)params.outheight;
         //if (params.debug && j % (params.outheight/32) == 0)
@@ -259,11 +267,17 @@ void process_single_image(THREAD_DATA* data, int nframe) {
         }
     }
 
-    if(params.debug) { fprintf(stderr, "%s() - Processing time: %g seconds\n", data->progName, GetRunTime() - starttime); }
+    if(params.debug) {
+        fprintf(stderr,
+                "%s() T%02li - Processing time: %g seconds\n",
+                data->progName,
+                data->worker_id,
+                GetRunTime() - starttime);
+    }
 
     // Write out the equirectangular
     // Base the name on the name of the first frame
-    if(params.debug) fprintf(stderr, "%s() - Saving equirectangular\n", data->progName);
+    if(params.debug) fprintf(stderr, "%s() T%02li - Saving equirectangular\n", data->progName, data->worker_id);
     WriteSpherical(fname1, nframe, frame_spherical, params.outwidth, params.outheight);
 }
 
@@ -286,13 +300,15 @@ int CheckFrames(const char* fname1, const char* fname2, int* width, int* height)
         return (-1);
     }
 
+    if(params.debug) fprintf(stderr, "fname1=%s fname2=%s\n", fname1, fname2);
+
     FILE* fptr;
     // Frame 1
     if((fptr = fopen(fname1, "rb")) == NULL) {
         fprintf(stderr, "CheckFrames() - Failed to open first frame \"%s\"\n", fname1);
         return (-1);
     }
-    int w1 = -1, h1 = -1, depth = -1;
+    int w1 = -1, h1 = -1, depth;
     if(frame1_is_jpg) {
         JPEG_Info(fptr, &w1, &h1, &depth);
     } else {
@@ -306,16 +322,17 @@ int CheckFrames(const char* fname1, const char* fname2, int* width, int* height)
         return (-1);
     }
     int w2 = -1, h2 = -1;
-    if(frame1_is_jpg) {
-        JPEG_Info(fptr, &w1, &h1, &depth);
+    if(frame2_is_jpg) {
+        JPEG_Info(fptr, &w2, &h2, &depth);
     } else {
-        PNG_Info(fptr, &w1, &h1, &depth);
+        PNG_Info(fptr, &w2, &h2, &depth);
     }
     fclose(fptr);
 
     // Are they the same size
     if(w1 != w2 || h1 != h2) {
         fprintf(stderr, "CheckFrames() - Frame sizes don't match, %d != %d or %d != %d\n", w1, h1, w2, h2);
+        fprintf(stderr, "CheckFrames() - Frame sizes don't match, %d != %d or %d != %d\n", w1, w2, h1, h2);
         return (-1);
     }
 
@@ -370,7 +387,10 @@ int WriteSpherical(const char* basename, int nframe, const BITMAP4* img, int w, 
         fprintf(stderr, "WriteSpherical() - Failed to open output file \"%s\"\n", fname);
         return (FALSE);
     }
-    PNG_Write(fptr, img, w, h, 100);
+
+    if(PNG_Write(fptr, img, w, h, FALSE)) {
+        fprintf(stderr, "WriteSpherical() - Failed to write output file \"%s\"\n", fname);
+    }
     fclose(fptr);
 
     return (TRUE);
@@ -639,6 +659,7 @@ void Init(void) {
     params.nstop = 100000;
     params.outfilename[0] = '\0';
     params.debug = FALSE;
+    params.threads = MAX(1, sysconf(_SC_NPROCESSORS_ONLN));
 
     // Parameters for the 6 cube planes, ax + by + cz + d = 0
     params.faces[LEFT].a = -1;
@@ -710,22 +731,25 @@ int CheckTemplate(char* s, int nexpect) {
 void GiveUsage(char* s) {
     fprintf(stderr, "Usage: %s [options] sequencetemplate\n", s);
     fprintf(stderr, "\n");
-    fprintf(stderr, "The sequence filename template should contain two %%d entries. The first will be populated\n");
-    fprintf(stderr, "with the track number 0 or 5, the second is the frame sequence number, see -n and -m below.\n");
+    fprintf(stderr,
+            "The sequence filename template should contain two %%d entries. The first will be populated with the track "
+            "number 0 or 5, the second is the frame sequence number, see -n and -m below.\n");
     fprintf(stderr, "So for example, if there are 1000 frames called track0_frame0001.png, track5_0001.png, ...\n");
+    fprintf(stderr, "\n");
     fprintf(stderr, "then the program might be called as follows:\n");
     fprintf(stderr, "   %s -w 4096 -n 1 -m 1000 track%%d_frame%%04d.png\n", s);
+    fprintf(stderr, "\n");
     fprintf(stderr, "Or if directories are used with frames track0/frame1.png, track5/1000.png, ...\n");
     fprintf(stderr, "   %s -w 4096 -n 1 -m 1000 track%%d/frame%%4d.png\n", s);
     fprintf(stderr, "\n");
     fprintf(stderr, "Options\n");
-    fprintf(stderr, "   -w n      Sets the output image width, default: %d\n", params.outwidth);
-    fprintf(stderr, "   -a n      Sets antialiasing level, default = %d\n", params.antialias);
+    fprintf(stderr, "   -w n      Sets the output image width,  default: %d\n", params.outwidth);
+    fprintf(stderr, "   -a n      Sets antialiasing level,      default: %d\n", params.antialias);
     fprintf(stderr,
             "   -o s      Specify the output filename template, default is based on track 0 name uses track 2\n");
     fprintf(stderr, "             If specified then it should contain one %%d field for the frame number\n");
-    fprintf(stderr, "   -n n      Start index for the sequence, default: %d\n", params.nstart);
-    fprintf(stderr, "   -m n      End index for the sequence, default: %d\n", params.nstop);
-    fprintf(stderr, "   -t        Amount of threads to use\n");
-    fprintf(stderr, "   -d        Enable debug mode, default: off\n");
+    fprintf(stderr, "   -n n      Start index for the sequence, default: %li\n", params.nstart);
+    fprintf(stderr, "   -m n      End index for the sequence,   default: %li\n", params.nstop);
+    fprintf(stderr, "   -t n      Amount of threads to use,     default: %li\n", params.threads);
+    fprintf(stderr, "   -d        Enable debug mode,            default: off\n");
 }
