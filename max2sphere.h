@@ -31,7 +31,7 @@ typedef struct {
     int outwidth, outheight;
     int framewidth, frameheight;
     int antialias, antialias2;
-    int nstart, nstop;
+    size_t nstart, nstop;
     PLANE faces[6];
     char outfilename[256];
     int debug;
