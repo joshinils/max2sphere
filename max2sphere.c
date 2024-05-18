@@ -20,7 +20,7 @@ typedef struct {
     UV uv;
     short int face;
 } LLTABLE;
-LLTABLE* lltable = NULL;
+LLTABLE* g_lltable = NULL;
 int ntable = 0;
 int itable = 0;
 
@@ -90,12 +90,12 @@ int main(int argc, char** argv) {
 
     // Does a table exist? If it does, load it. if not, create it and save it
     ntable = params.outheight * params.outwidth * params.antialias * params.antialias;
-    lltable = malloc(ntable * sizeof(LLTABLE));
+    g_lltable = malloc(ntable * sizeof(LLTABLE));
     sprintf(tablename, "%d_%d_%d_%li.data", whichtemplate, params.outwidth, params.outheight, params.antialias);
     int n = 0;
     if((fptr = fopen(tablename, "r")) != NULL) {
         if(params.debug) fprintf(stderr, "%s() - Reading lookup table\n", argv[0]);
-        if((n = fread(lltable, sizeof(LLTABLE), ntable, fptr)) != ntable) {
+        if((n = fread(g_lltable, sizeof(LLTABLE), ntable, fptr)) != ntable) {
             fprintf(stderr, "%s() - Failed to read lookup table \"%s\" (%d != %d)\n", argv[0], tablename, n, ntable);
         }
         fclose(fptr);
@@ -115,7 +115,7 @@ int main(int argc, char** argv) {
                         x = x0 + ai / dx; // 0 ... 1
                         longitude = x * TWOPI - M_PI; // -pi ... pi
                         latitude = y * M_PI - M_PI / 2; // -pi/2 ... pi/2
-                        lltable[itable].face = FindFaceUV(longitude, latitude, &(lltable[itable].uv));
+                        g_lltable[itable].face = FindFaceUV(longitude, latitude, &(g_lltable[itable].uv));
                         itable++;
                     }
                 }
@@ -123,7 +123,7 @@ int main(int argc, char** argv) {
         }
         if(params.debug) fprintf(stderr, "%s() - Saving lookup table\n", argv[0]);
         fptr = fopen(tablename, "w");
-        fwrite(lltable, ntable, sizeof(LLTABLE), fptr);
+        fwrite(g_lltable, ntable, sizeof(LLTABLE), fptr);
         fclose(fptr);
     }
 
@@ -159,7 +159,7 @@ int main(int argc, char** argv) {
         pthread_join(thread[i], NULL);
         printf("Thread: %02li done\n", i);
     }
-
+    free(g_lltable);
     exit(0);
 }
 
@@ -247,8 +247,8 @@ void process_single_image(THREAD_DATA* data, int nframe) {
                     // Calculate latitude and longitude
                     //longitude = x * TWOPI - M_PI;    // -pi ... pi
                     //latitude = y * M_PI - M_PI/2;    // -pi/2 ... pi/2
-                    int face = lltable[itable].face;
-                    UV uv = lltable[itable].uv;
+                    int face = g_lltable[itable].face;
+                    UV uv = g_lltable[itable].uv;
                     itable++;
 
                     // Sum over the supersampling set
@@ -267,6 +267,9 @@ void process_single_image(THREAD_DATA* data, int nframe) {
         }
     }
 
+    Destroy_Bitmap(frame_input1);
+    Destroy_Bitmap(frame_input2);
+
     if(params.debug) {
         fprintf(stderr,
                 "%s() T%02li - Processing time: %g seconds\n",
@@ -279,6 +282,7 @@ void process_single_image(THREAD_DATA* data, int nframe) {
     // Base the name on the name of the first frame
     if(params.debug) fprintf(stderr, "%s() T%02li - Saving equirectangular\n", data->progName, data->worker_id);
     WriteSpherical(fname1, nframe, frame_spherical, params.outwidth, params.outheight);
+    Destroy_Bitmap(frame_spherical);
 }
 
 

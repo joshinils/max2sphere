@@ -977,7 +977,7 @@ int TGA_Read(FILE* fptr, BITMAP4* image, int* width, int* height) {
             }
         }
     }
-
+    free(ctable);
     /* Flip the image ? */
     if((header.imagedescriptor & 0x20) == 32) Flip_Bitmap(image, header.width, header.height, 0);
 
