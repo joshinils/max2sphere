@@ -41,7 +41,7 @@ int main(int argc, char** argv) {
 
     for(int i = 1; i < argc - 1; i++) {
         if(strcmp(argv[i], "-w") == 0) {
-            params.outwidth = atoi(argv[i + 1]);
+            params.outwidth = MAX(1, atoi(argv[i + 1]));
             params.outwidth = 4 * (params.outwidth / 4); // Make factor of 4
             params.outheight = params.outwidth / 2; // Will be even
         } else if(strcmp(argv[i], "-a") == 0) {
@@ -79,19 +79,19 @@ int main(int argc, char** argv) {
     // if(params.debug) fprintf(stderr, "fname1=%s fname2=%s\n", fname1, fname2);
     if((whichtemplate = CheckFrames(fname1, fname2, &params.framewidth, &params.frameheight)) < 0) exit(-1);
     if(params.debug) {
-        fprintf(stderr, "%s() - frame dimensions: %d x %d\n", argv[0], params.framewidth, params.frameheight);
+        fprintf(stderr, "%s() - frame dimensions: %li × %li\n", argv[0], params.framewidth, params.frameheight);
         fprintf(stderr, "%s() - Expect frame template %d\n", argv[0], whichtemplate + 1);
     }
 
     if(params.outwidth < 0) {
-        params.outwidth = template[whichtemplate].equiwidth;
+        params.outwidth = template[whichtemplate].equi_width;
         params.outheight = params.outwidth / 2;
     }
 
     // Does a table exist? If it does, load it. if not, create it and save it
     ntable = params.outheight * params.outwidth * params.antialias * params.antialias;
     lltable = malloc(ntable * sizeof(LLTABLE));
-    sprintf(tablename, "%d_%d_%d_%d.data", whichtemplate, params.outwidth, params.outheight, params.antialias);
+    sprintf(tablename, "%d_%d_%d_%li.data", whichtemplate, params.outwidth, params.outheight, params.antialias);
     int n = 0;
     if((fptr = fopen(tablename, "r")) != NULL) {
         if(params.debug) fprintf(stderr, "%s() - Reading lookup table\n", argv[0]);
@@ -109,9 +109,9 @@ int main(int argc, char** argv) {
             y0 = j / (double)params.outheight;
             for(int i = 0; i < params.outwidth; i++) {
                 x0 = i / (double)params.outwidth;
-                for(int aj = 0; aj < params.antialias; aj++) {
+                for(size_t aj = 0; aj < params.antialias; aj++) {
                     y = y0 + aj / dy; // 0 ... 1
-                    for(int ai = 0; ai < params.antialias; ai++) {
+                    for(size_t ai = 0; ai < params.antialias; ai++) {
                         x = x0 + ai / dx; // 0 ... 1
                         longitude = x * TWOPI - M_PI; // -pi ... pi
                         latitude = y * M_PI - M_PI / 2; // -pi/2 ... pi/2
@@ -134,7 +134,7 @@ int main(int argc, char** argv) {
     THREAD_DATA data[params.threads];
 
     pthread_mutex_t mutex_counter = PTHREAD_MUTEX_INITIALIZER;
-    int shared_counter = params.nstart;
+    size_t shared_counter = params.nstart;
 
     for(size_t thread_id = 0; thread_id < params.threads; thread_id++) {
         // Initialize the thread data
@@ -237,11 +237,11 @@ void process_single_image(THREAD_DATA* data, int nframe) {
             COLOUR16 csum = { 0, 0, 0 }; // Supersampling antialising sum
 
             // Antialiasing loops
-            for(int aj = 0; aj < params.antialias; aj++) {
+            for(size_t aj = 0; aj < params.antialias; aj++) {
                 //y = y0 + aj / dy; // 0 ... 1
 
                 // Antialiasing loops
-                for(int ai = 0; ai < params.antialias; ai++) {
+                for(size_t ai = 0; ai < params.antialias; ai++) {
                     //x = x0 + ai / dx; // 0 ... 1
 
                     // Calculate latitude and longitude
@@ -289,7 +289,7 @@ void process_single_image(THREAD_DATA* data, int nframe) {
     - are they the same size
     - determine which frame template we are using
 */
-int CheckFrames(const char* fname1, const char* fname2, int* width, int* height) {
+int CheckFrames(const char* fname1, const char* fname2, size_t* width, size_t* height) {
     boolean frame1_is_jpg = IsJPEG(fname1);
     boolean frame2_is_jpg = IsJPEG(fname2);
     boolean frame1_is_png = IsPNG(fname1);
@@ -744,10 +744,10 @@ void GiveUsage(char* s) {
     fprintf(stderr, "\n");
     fprintf(stderr, "Options\n");
     fprintf(stderr, "   -w n      Sets the output image width,  default: %d\n", params.outwidth);
-    fprintf(stderr, "   -a n      Sets antialiasing level,      default: %d\n", params.antialias);
+    fprintf(stderr, "   -a n      Sets antialiasing level,      default: %li\n", params.antialias);
     fprintf(stderr,
-            "   -o s      Specify the output filename template, default is based on track 0 name uses track 2\n");
-    fprintf(stderr, "             If specified then it should contain one %%d field for the frame number\n");
+            "   -o s      Specify the output filename template, default is based on track 0 name uses track 2. If "
+            "specified then it should contain one %%d field for the frame number\n");
     fprintf(stderr, "   -n n      Start index for the sequence, default: %li\n", params.nstart);
     fprintf(stderr, "   -m n      End index for the sequence,   default: %li\n", params.nstop);
     fprintf(stderr, "   -t n      Amount of threads to use,     default: %li\n", params.threads);

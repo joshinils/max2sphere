@@ -29,12 +29,12 @@ typedef struct {
 
 typedef struct {
     int outwidth, outheight;
-    int framewidth, frameheight;
-    int antialias, antialias2;
+    size_t framewidth, frameheight;
+    size_t antialias, antialias2;
     size_t nstart, nstop;
     PLANE faces[6];
     char outfilename[256];
-    int debug;
+    boolean debug;
     size_t threads;
 } PARAMS;
 
@@ -43,13 +43,13 @@ typedef struct {
     int sidewidth;
     int centerwidth;
     int blendwidth;
-    int equiwidth;
+    int equi_width;
 } FRAMESPECS;
 
 typedef struct {
     size_t worker_id;
     pthread_mutex_t* counter_mutex;
-    int* ip_shared_counter;
+    size_t* ip_shared_counter;
     const char* progName;
     const char* last_argument;
 } THREAD_DATA;
@@ -59,7 +59,7 @@ typedef struct {
 void* worker_function(void* input);
 void set_frame_filename_from_template(char*, char*, int, const char*);
 void process_single_image(THREAD_DATA*, int);
-int CheckFrames(const char*, const char*, int*, int*);
+int CheckFrames(const char*, const char*, size_t*, size_t*);
 int WriteSpherical(const char*, int, const BITMAP4*, int, int);
 int ReadFrame(BITMAP4*, char*, int, int);
 int FindFaceUV(double, double, UV*);
