@@ -156,10 +156,10 @@ int main(int argc, char** argv) {
         int creating_thread_status =
         pthread_create(&(thread[thread_id]), NULL, worker_function, (void*)&data[thread_id]);
         if(creating_thread_status) {
-            fprintf(stderr, "Error creating thread %02li, exiting.\n", thread_id);
+            if(params.debug) { fprintf(stderr, "Error creating thread %02li, exiting.\n", thread_id); }
             exit(-1);
         } else if(params.debug) {
-            fprintf(stderr, "%s() - Started Thread %02li\n", argv[0], thread_id);
+            if(params.debug) { fprintf(stderr, "%s() - Started Thread %02li\n", argv[0], thread_id); }
         }
 
         if(params.threads > 1) {
@@ -175,7 +175,7 @@ int main(int argc, char** argv) {
         Destroy_Bitmap(data[thread_id].frame_input2);
         Destroy_Bitmap(data[thread_id].frame_spherical);
 
-        printf("Thread: %02li done\n", thread_id);
+        if(params.debug) { fprintf(stderr, "Thread: %02li done\n", thread_id); }
     }
 
     free(g_lltable);
@@ -201,12 +201,15 @@ void* worker_function(void* input) {
 
         if(nframe > params.n_stop) { break; }
 
-        printf("%s() T%02li - starting job %li\n", data->progName, data->worker_id, nframe);
+        if(params.debug) {
+            fprintf(stderr, "%s() T%02li - starting job %li\n", data->progName, data->worker_id, nframe);
+        }
         process_single_image(data, nframe);
-        printf("%s() T%02li - finished job %li\n", data->progName, data->worker_id, nframe);
+        if(params.debug) {
+            fprintf(stderr, "%s() T%02li - finished job %li\n", data->progName, data->worker_id, nframe);
+        }
     }
-    printf("%s() T%02li - finished all jobs\n", data->progName, data->worker_id);
-
+    if(params.debug) { fprintf(stderr, "%s() T%02li - finished all jobs\n", data->progName, data->worker_id); }
     return NULL;
 }
 
