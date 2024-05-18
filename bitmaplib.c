@@ -1825,7 +1825,7 @@ int PNG_Read(FILE *fptr,BITMAP4 *image,int *owidth,int *oheight)
 
    int x,y;
    png_bytep *row_pointers = (png_bytep*)malloc(sizeof(png_bytep) * height);
-   for (y=0;y<height;y++) 
+   for (y=0;y<height;y++)
       row_pointers[y] = (png_byte*)malloc(png_get_rowbytes(png,info));
 
    png_read_image(png, row_pointers);
