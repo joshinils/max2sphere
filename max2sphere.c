@@ -50,9 +50,9 @@ int main(int argc, char** argv) {
         } else if(strcmp(argv[i], "-o") == 0) {
             strcpy(params.outfilename, argv[i + 1]);
         } else if(strcmp(argv[i], "-n") == 0) {
-            params.nstart = MAX(0, atoi(argv[i + 1]));
+            params.n_start = MAX(0, atoi(argv[i + 1]));
         } else if(strcmp(argv[i], "-m") == 0) {
-            params.nstop = MAX(0, atoi(argv[i + 1]));
+            params.n_stop = MAX(0, atoi(argv[i + 1]));
         } else if(strcmp(argv[i], "-d") == 0) {
             params.debug = TRUE;
         } else if(strcmp(argv[i], "-t") == 0) {
@@ -73,9 +73,9 @@ int main(int argc, char** argv) {
 
 
     // Check the first frame to determine template and frame sizes
-    set_frame_filename_from_template(fname1, fname2, params.nstart, argv[argc - 1]);
-    // sprintf(fname1, argv[argc - 1], 0, params.nstart);
-    // sprintf(fname2, argv[argc - 1], 5, params.nstart);
+    set_frame_filename_from_template(fname1, fname2, params.n_start, argv[argc - 1]);
+    // sprintf(fname1, argv[argc - 1], 0, params.n_start);
+    // sprintf(fname2, argv[argc - 1], 5, params.n_start);
     // if(params.debug) fprintf(stderr, "fname1=%s fname2=%s\n", fname1, fname2);
     if((whichtemplate = CheckFrames(fname1, fname2, &params.framewidth, &params.frameheight)) < 0) exit(-1);
     if(params.debug) {
@@ -130,11 +130,13 @@ int main(int argc, char** argv) {
 
     if(params.debug) fprintf(stderr, "%s() - Starting threads\n", argv[0]);
 
+    params.threads = MIN(params.threads, params.n_stop);
+
     pthread_t thread[params.threads];
     THREAD_DATA data[params.threads];
 
     pthread_mutex_t mutex_counter = PTHREAD_MUTEX_INITIALIZER;
-    size_t shared_counter = params.nstart;
+    size_t shared_counter = params.n_start;
 
     for(size_t thread_id = 0; thread_id < params.threads; thread_id++) {
         // Initialize the thread data
@@ -144,6 +146,11 @@ int main(int argc, char** argv) {
         data[thread_id].progName = argv[0];
         data[thread_id].last_argument = argv[argc - 1];
 
+        // Malloc images (once, then reuse in the same thread)
+        data[thread_id].frame_input1 = Create_Bitmap(params.framewidth, params.frameheight);
+        data[thread_id].frame_input2 = Create_Bitmap(params.framewidth, params.frameheight);
+        data[thread_id].frame_spherical = Create_Bitmap(params.outwidth, params.outheight);
+
         int creating_thread_status =
         pthread_create(&(thread[thread_id]), NULL, worker_function, (void*)&data[thread_id]);
         if(creating_thread_status) {
@@ -152,13 +159,23 @@ int main(int argc, char** argv) {
         } else if(params.debug) {
             fprintf(stderr, "%s() - Started Thread %02li\n", argv[0], thread_id);
         }
+
+        if(params.threads > 1) {
+            // spread start of threads out a bit so compute and io time do not overlap at the start
+            usleep(1000.0 / (params.threads + 1));
+        }
     }
 
-    for(size_t i = 0; i < params.threads; i++) {
-        // Wait till threads are complete before main continues
-        pthread_join(thread[i], NULL);
-        printf("Thread: %02li done\n", i);
+    for(size_t thread_id = 0; thread_id < params.threads; ++thread_id) {
+        pthread_join(thread[thread_id], NULL);
+
+        Destroy_Bitmap(data[thread_id].frame_input1);
+        Destroy_Bitmap(data[thread_id].frame_input2);
+        Destroy_Bitmap(data[thread_id].frame_spherical);
+
+        printf("Thread: %02li done\n", thread_id);
     }
+
     free(g_lltable);
     exit(0);
 }
@@ -180,7 +197,7 @@ void* worker_function(void* input) {
         (*(data->ip_shared_counter))++;
         pthread_mutex_unlock(data->counter_mutex);
 
-        if(nframe > params.nstop) { break; }
+        if(nframe > params.n_stop) { break; }
 
         printf("%s() T%02li starting job %li\n", data->progName, data->worker_id, nframe);
         process_single_image(data, nframe);
@@ -196,12 +213,7 @@ void process_single_image(THREAD_DATA* data, int nframe) {
     char fname1[256], fname2[256];
     set_frame_filename_from_template(fname1, fname2, nframe, data->last_argument);
 
-    // Malloc images
-    BITMAP4* frame_input1 = Create_Bitmap(params.framewidth, params.frameheight);
-    BITMAP4* frame_input2 = Create_Bitmap(params.framewidth, params.frameheight);
-    BITMAP4* frame_spherical = Create_Bitmap(params.outwidth, params.outheight);
-
-    if(frame_input1 == NULL || frame_input2 == NULL || frame_spherical == NULL) {
+    if(data->frame_input1 == NULL || data->frame_input2 == NULL || data->frame_spherical == NULL) {
         fprintf(stderr, "%s() T%02li - Failed to malloc memory for the images\n", data->progName, data->worker_id);
         exit(-1);
     }
@@ -210,16 +222,16 @@ void process_single_image(THREAD_DATA* data, int nframe) {
     if(params.debug)
         fprintf(stderr, "%s() T%02li - Creating spherical map for frame %d\n", data->progName, data->worker_id, nframe);
     BITMAP4 black = { 0, 0, 0, 255 };
-    Erase_Bitmap(frame_spherical, params.outwidth, params.outheight, black);
+    Erase_Bitmap(data->frame_spherical, params.outwidth, params.outheight, black);
 
     // Read both frames
-    if(!ReadFrame(frame_input1, fname1, params.framewidth, params.frameheight)) {
+    if(!ReadFrame(data->frame_input1, fname1, params.framewidth, params.frameheight)) {
         if(params.debug)
             fprintf(stderr, "%s() T%02li - failed to read frame \"%s\"\n", data->progName, data->worker_id, fname2);
         return;
     }
 
-    if(!ReadFrame(frame_input2, fname2, params.framewidth, params.frameheight)) {
+    if(!ReadFrame(data->frame_input2, fname2, params.framewidth, params.frameheight)) {
         if(params.debug)
             fprintf(stderr, "%s() T%02li - failed to read frame \"%s\"\n", data->progName, data->worker_id, fname2);
         return;
@@ -252,7 +264,7 @@ void process_single_image(THREAD_DATA* data, int nframe) {
                     itable++;
 
                     // Sum over the supersampling set
-                    BITMAP4 c = GetColour(face, uv, frame_input1, frame_input2);
+                    BITMAP4 c = GetColour(face, uv, data->frame_input1, data->frame_input2);
                     csum.r += c.r;
                     csum.g += c.g;
                     csum.b += c.b;
@@ -261,14 +273,11 @@ void process_single_image(THREAD_DATA* data, int nframe) {
 
             // Finally update the spherical image
             int index = j * params.outwidth + i;
-            frame_spherical[index].r = csum.r / params.antialias2;
-            frame_spherical[index].g = csum.g / params.antialias2;
-            frame_spherical[index].b = csum.b / params.antialias2;
+            data->frame_spherical[index].r = csum.r / params.antialias2;
+            data->frame_spherical[index].g = csum.g / params.antialias2;
+            data->frame_spherical[index].b = csum.b / params.antialias2;
         }
     }
-
-    Destroy_Bitmap(frame_input1);
-    Destroy_Bitmap(frame_input2);
 
     if(params.debug) {
         fprintf(stderr,
@@ -281,8 +290,7 @@ void process_single_image(THREAD_DATA* data, int nframe) {
     // Write out the equirectangular
     // Base the name on the name of the first frame
     if(params.debug) fprintf(stderr, "%s() T%02li - Saving equirectangular\n", data->progName, data->worker_id);
-    WriteSpherical(fname1, nframe, frame_spherical, params.outwidth, params.outheight);
-    Destroy_Bitmap(frame_spherical);
+    WriteSpherical(fname1, nframe, data->frame_spherical, params.outwidth, params.outheight);
 }
 
 
@@ -659,8 +667,8 @@ void Init(void) {
     params.frameheight = -1;
     params.antialias = 2;
     params.antialias2 = 4; // antialias squared
-    params.nstart = 0;
-    params.nstop = 100000;
+    params.n_start = 0;
+    params.n_stop = 100000;
     params.outfilename[0] = '\0';
     params.debug = FALSE;
     params.threads = MAX(1, sysconf(_SC_NPROCESSORS_ONLN));
@@ -752,8 +760,8 @@ void GiveUsage(char* s) {
     fprintf(stderr,
             "   -o s      Specify the output filename template, default is based on track 0 name uses track 2. If "
             "specified then it should contain one %%d field for the frame number\n");
-    fprintf(stderr, "   -n n      Start index for the sequence, default: %li\n", params.nstart);
-    fprintf(stderr, "   -m n      End index for the sequence,   default: %li\n", params.nstop);
+    fprintf(stderr, "   -n n      Start index for the sequence, default: %li\n", params.n_start);
+    fprintf(stderr, "   -m n      End index for the sequence,   default: %li\n", params.n_stop);
     fprintf(stderr, "   -t n      Amount of threads to use,     default: %li\n", params.threads);
     fprintf(stderr, "   -d        Enable debug mode,            default: off\n");
 }

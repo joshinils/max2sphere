@@ -31,7 +31,7 @@ typedef struct {
     int outwidth, outheight;
     size_t framewidth, frameheight;
     size_t antialias, antialias2;
-    size_t nstart, nstop;
+    size_t n_start, n_stop;
     PLANE faces[6];
     char outfilename[256];
     boolean debug;
@@ -52,6 +52,10 @@ typedef struct {
     size_t* ip_shared_counter;
     const char* progName;
     const char* last_argument;
+
+    BITMAP4* frame_input1;
+    BITMAP4* frame_input2;
+    BITMAP4* frame_spherical;
 } THREAD_DATA;
 
 
