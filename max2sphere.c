@@ -55,6 +55,8 @@ int main(int argc, char** argv) {
             params.n_stop = MAX(0, atoi(argv[i + 1]));
         } else if(strcmp(argv[i], "-d") == 0) {
             params.debug = TRUE;
+        } else if(strcmp(argv[i], "-F") == 0) {
+            params.skip_existing = FALSE;
         } else if(strcmp(argv[i], "-t") == 0) {
             params.threads = MAX(1, atoi(argv[i + 1]));
         }
@@ -199,9 +201,9 @@ void* worker_function(void* input) {
 
         if(nframe > params.n_stop) { break; }
 
-        printf("%s() T%02li starting job %li\n", data->progName, data->worker_id, nframe);
+        printf("%s() T%02li - starting job %li\n", data->progName, data->worker_id, nframe);
         process_single_image(data, nframe);
-        printf("%s() T%02li finished job %li\n", data->progName, data->worker_id, nframe);
+        printf("%s() T%02li - finished job %li\n", data->progName, data->worker_id, nframe);
     }
     printf("%s() T%02li - finished all jobs\n", data->progName, data->worker_id);
 
@@ -212,6 +214,25 @@ void* worker_function(void* input) {
 void process_single_image(THREAD_DATA* data, int nframe) {
     char fname1[256], fname2[256];
     set_frame_filename_from_template(fname1, fname2, nframe, data->last_argument);
+
+    if(params.skip_existing) {
+        // Create the output file name
+        char fname_out[256];
+        create_output_filename(fname_out, fname1, nframe);
+
+        if(access(fname_out, F_OK) == 0) {
+            if(params.debug) {
+                fprintf(stderr,
+                        "%s() T%02li - skipping frame, already exists \"%s\"\n",
+                        data->progName,
+                        data->worker_id,
+                        fname_out);
+            }
+            return;
+        } else if(params.debug) {
+            fprintf(stderr, "%s() T%02li - NOT skipping frame \"%s\"\n", data->progName, data->worker_id, fname_out);
+        }
+    }
 
     if(data->frame_input1 == NULL || data->frame_input2 == NULL || data->frame_spherical == NULL) {
         fprintf(stderr, "%s() T%02li - Failed to malloc memory for the images\n", data->progName, data->worker_id);
@@ -367,21 +388,11 @@ int CheckFrames(const char* fname1, const char* fname2, size_t* width, size_t* h
     return template_n;
 }
 
-
-/*
-   Write spherical image
-    The file name is either using the mask params.outfilename which should have a %d for the frame number
-    or based upon the basename provided which will have two %d locations for track and framenumber
-*/
-int WriteSpherical(const char* basename, int nframe, const BITMAP4* img, int w, int h) {
-    int i;
-    FILE* fptr;
-    char fname[256];
-
-    // Create the output file name
+// params.skip_existing
+void create_output_filename(char* fname, const char* basename, int nframe) {
     if(strlen(params.outfilename) < 2) {
         sprintf(fname, basename, 0, nframe);
-        for(i = strlen(fname) - 1; i > 0; i--) {
+        for(int i = strlen(fname) - 1; i > 0; i--) {
             if(fname[i] == '.') {
                 fname[i] = '\0';
                 break;
@@ -391,10 +402,23 @@ int WriteSpherical(const char* basename, int nframe, const BITMAP4* img, int w, 
     } else {
         sprintf(fname, params.outfilename, nframe);
     }
+}
+
+
+/*
+   Write spherical image
+    The file name is either using the mask params.outfilename which should have a %d for the frame number
+    or based upon the basename provided which will have two %d locations for track and framenumber
+*/
+int WriteSpherical(const char* basename, int nframe, const BITMAP4* img, int w, int h) {
+    // Create the output file name
+    char fname[256];
+    create_output_filename(fname, basename, nframe);
 
     if(params.debug) fprintf(stderr, "WriteSpherical() - Saving file \"%s\"\n", fname);
 
     // Save
+    FILE* fptr;
     if((fptr = fopen(fname, "wb")) == NULL) {
         fprintf(stderr, "WriteSpherical() - Failed to open output file \"%s\"\n", fname);
         return (FALSE);
@@ -672,6 +696,7 @@ void Init(void) {
     params.outfilename[0] = '\0';
     params.debug = FALSE;
     params.threads = MAX(1, sysconf(_SC_NPROCESSORS_ONLN));
+    params.skip_existing = TRUE;
 
     // Parameters for the 6 cube planes, ax + by + cz + d = 0
     params.faces[LEFT].a = -1;
@@ -755,13 +780,14 @@ void GiveUsage(char* s) {
     fprintf(stderr, "   %s -w 4096 -n 1 -m 1000 track%%d/frame%%4d.png\n", s);
     fprintf(stderr, "\n");
     fprintf(stderr, "Options\n");
-    fprintf(stderr, "   -w n      Sets the output image width,  default: %d\n", params.outwidth);
-    fprintf(stderr, "   -a n      Sets antialiasing level,      default: %li\n", params.antialias);
+    fprintf(stderr, "   -w n      Sets the output image width,      default: %d\n", params.outwidth);
+    fprintf(stderr, "   -a n      Sets antialiasing level,          default: %li\n", params.antialias);
     fprintf(stderr,
             "   -o s      Specify the output filename template, default is based on track 0 name uses track 2. If "
             "specified then it should contain one %%d field for the frame number\n");
-    fprintf(stderr, "   -n n      Start index for the sequence, default: %li\n", params.n_start);
-    fprintf(stderr, "   -m n      End index for the sequence,   default: %li\n", params.n_stop);
-    fprintf(stderr, "   -t n      Amount of threads to use,     default: %li\n", params.threads);
-    fprintf(stderr, "   -d        Enable debug mode,            default: off\n");
+    fprintf(stderr, "   -n n      Start index for the sequence,     default: %li\n", params.n_start);
+    fprintf(stderr, "   -m n      End index for the sequence,       default: %li\n", params.n_stop);
+    fprintf(stderr, "   -t n      Amount of threads to use,         default: %li\n", params.threads);
+    fprintf(stderr, "   -d        Enable debug mode,                default: off\n");
+    fprintf(stderr, "   -F        Overwrite existing output images, default: off\n");
 }

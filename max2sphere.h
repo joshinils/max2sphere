@@ -36,6 +36,7 @@ typedef struct {
     char outfilename[256];
     boolean debug;
     size_t threads;
+    boolean skip_existing;
 } PARAMS;
 
 typedef struct {
@@ -64,6 +65,7 @@ void* worker_function(void* input);
 void set_frame_filename_from_template(char*, char*, int, const char*);
 void process_single_image(THREAD_DATA*, int);
 int CheckFrames(const char*, const char*, size_t*, size_t*);
+void create_output_filename(char*, const char*, int);
 int WriteSpherical(const char*, int, const BITMAP4*, int, int);
 int ReadFrame(BITMAP4*, char*, int, int);
 int FindFaceUV(double, double, UV*);
