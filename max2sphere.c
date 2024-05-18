@@ -1,5 +1,4 @@
 #include "max2sphere.h"
-
 /*
     Convert a sequence of pairs of frames from the GoPro Max camera to an equirectangular
     Sept 08: First version based upon cube2sphere
@@ -25,17 +24,9 @@ int ntable = 0;
 int itable = 0;
 
 int main(int argc, char** argv) {
-    char fname1[256], fname2[256], tablename[256];
+    char tablename[256];
     double x, y, dx, dy, x0, y0, longitude, latitude;
-    UV uv;
-    COLOUR16 csum, czero = { 0, 0, 0 };
-    BITMAP4 c, black = { 0, 0, 0, 255 };
-    ;
-    double starttime;
     FILE* fptr;
-
-    // Memory for images, 2 input frames and one output equirectangular
-    BITMAP4 *frame1 = NULL, *frame2 = NULL, *spherical = NULL;
 
     // Default settings
     Init();
@@ -69,28 +60,19 @@ int main(int argc, char** argv) {
             params.outfilename[0] = '\0';
     }
 
+
+    char fname1[256], fname2[256];
     // Check the first frame to determine template and frame sizes
-    sprintf(fname1, argv[argc - 1], 0, params.nstart);
-    sprintf(fname2, argv[argc - 1], 5, params.nstart);
-    if((whichtemplate = CheckFrames(fname1, fname2, &params.framewidth, &params.frameheight)) < 0)
-        exit(-1);
+    set_frame_filename_from_template(fname1, fname2, params.nstart, argv[argc - 1]);
+    if((whichtemplate = CheckFrames(fname1, fname2, &params.framewidth, &params.frameheight)) < 0) exit(-1);
     if(params.debug) {
         fprintf(stderr, "%s() - frame dimensions: %d x %d\n", argv[0], params.framewidth, params.frameheight);
         fprintf(stderr, "%s() - Expect frame template %d\n", argv[0], whichtemplate + 1);
     }
 
-    // Malloc images
-    frame1 = Create_Bitmap(params.framewidth, params.frameheight);
-    frame2 = Create_Bitmap(params.framewidth, params.frameheight);
     if(params.outwidth < 0) {
         params.outwidth = template[whichtemplate].equiwidth;
         params.outheight = params.outwidth / 2;
-    }
-
-    spherical = Create_Bitmap(params.outwidth, params.outheight);
-    if(frame1 == NULL || frame2 == NULL || spherical == NULL) {
-        fprintf(stderr, "%s() - Failed to malloc memory for the images\n", argv[0]);
-        exit(-1);
     }
 
     // Does a table exist? If it does, load it. if not, create it and save it
@@ -134,74 +116,97 @@ int main(int argc, char** argv) {
 
     // Process each frame of the sequence
     for(int nframe = params.nstart; nframe <= params.nstop; nframe++) {
-        // Form the spherical map
-        if(params.debug) fprintf(stderr, "%s() - Creating spherical map for frame %d\n", argv[0], nframe);
-        Erase_Bitmap(spherical, params.outwidth, params.outheight, black);
-
-        // Read both frames
-        sprintf(fname1, argv[argc - 1], 0, nframe);
-        sprintf(fname2, argv[argc - 1], 5, nframe);
-        if(!ReadFrame(frame1, fname1, params.framewidth, params.frameheight)) {
-            if(params.debug) fprintf(stderr, "%s() - failed to read frame \"%s\"\n", argv[0], fname2);
-            continue;
-        }
-        if(!ReadFrame(frame2, fname2, params.framewidth, params.frameheight)) {
-            if(params.debug) fprintf(stderr, "%s() - failed to read frame \"%s\"\n", argv[0], fname2);
-            continue;
-        }
-
-        starttime = GetRunTime();
-        itable = 0;
-        for(int j = 0; j < params.outheight; j++) {
-            //y0 = j / (double)params.outheight;
-            //if (params.debug && j % (params.outheight/32) == 0)
-            //fprintf(stderr,"%s() - Scan line %d\n",argv[0],j);
-
-            for(int i = 0; i < params.outwidth; i++) {
-                //x0 = i / (double)params.outwidth;
-                csum = czero; // Supersampling antialising sum
-
-                // Antialiasing loops
-                for(int aj = 0; aj < params.antialias; aj++) {
-                    //y = y0 + aj / dy; // 0 ... 1
-
-                    // Antialiasing loops
-                    for(int ai = 0; ai < params.antialias; ai++) {
-                        //x = x0 + ai / dx; // 0 ... 1
-
-                        // Calculate latitude and longitude
-                        //longitude = x * TWOPI - M_PI;    // -pi ... pi
-                        //latitude = y * M_PI - M_PI/2;    // -pi/2 ... pi/2
-                        int face = lltable[itable].face;
-                        uv = lltable[itable].uv;
-                        itable++;
-
-                        // Sum over the supersampling set
-                        c = GetColour(face, uv, frame1, frame2);
-                        csum.r += c.r;
-                        csum.g += c.g;
-                        csum.b += c.b;
-                    }
-                }
-
-                // Finally update the spherical image
-                int index = j * params.outwidth + i;
-                spherical[index].r = csum.r / params.antialias2;
-                spherical[index].g = csum.g / params.antialias2;
-                spherical[index].b = csum.b / params.antialias2;
-            }
-        }
-
-        if(params.debug) { fprintf(stderr, "%s() - Processing time: %g seconds\n", argv[0], GetRunTime() - starttime); }
-
-        // Write out the equirectangular
-        // Base the name on the name of the first frame
-        if(params.debug) fprintf(stderr, "%s() - Saving equirectangular\n", argv[0]);
-        WriteSpherical(fname1, nframe, spherical, params.outwidth, params.outheight);
+        char fname1[256], fname2[256];
+        set_frame_filename_from_template(fname1, fname2, nframe, argv[argc - 1]);
+        process_single_image(nframe, fname1, fname2, argv[0]);
     }
 
     exit(0);
 }
+
+
+void set_frame_filename_from_template(char* fname1, char* fname2, int nframe, char* last_argument) {
+    sprintf(fname1, last_argument, 0, nframe);
+    sprintf(fname2, last_argument, 5, nframe);
+}
+
+
+void process_single_image(int nframe, char* fname1, char* fname2, char* progName) {
+    // Malloc images
+    BITMAP4* frame_input1 = Create_Bitmap(params.framewidth, params.frameheight);
+    BITMAP4* frame_input2 = Create_Bitmap(params.framewidth, params.frameheight);
+    BITMAP4* frame_spherical = Create_Bitmap(params.outwidth, params.outheight);
+
+    if(frame_input1 == NULL || frame_input2 == NULL || frame_spherical == NULL) {
+        fprintf(stderr, "%s() - Failed to malloc memory for the images\n", progName);
+        exit(-1);
+    }
+
+    // Form the spherical map
+    if(params.debug) fprintf(stderr, "%s() - Creating spherical map for frame %d\n", progName, nframe);
+    BITMAP4 black = { 0, 0, 0, 255 };
+    Erase_Bitmap(frame_spherical, params.outwidth, params.outheight, black);
+
+    // Read both frames
+    if(!ReadFrame(frame_input1, fname1, params.framewidth, params.frameheight)) {
+        if(params.debug) fprintf(stderr, "%s() - failed to read frame \"%s\"\n", progName, fname2);
+        return;
+    }
+    if(!ReadFrame(frame_input2, fname2, params.framewidth, params.frameheight)) {
+        if(params.debug) fprintf(stderr, "%s() - failed to read frame \"%s\"\n", progName, fname2);
+        return;
+    }
+
+    double starttime = GetRunTime();
+    itable = 0;
+    for(int j = 0; j < params.outheight; j++) {
+        //y0 = j / (double)params.outheight;
+        //if (params.debug && j % (params.outheight/32) == 0)
+        //fprintf(stderr,"%s() - Scan line %d\n",progName,j);
+
+        for(int i = 0; i < params.outwidth; i++) {
+            //x0 = i / (double)params.outwidth;
+            COLOUR16 csum = { 0, 0, 0 }; // Supersampling antialising sum
+
+            // Antialiasing loops
+            for(int aj = 0; aj < params.antialias; aj++) {
+                //y = y0 + aj / dy; // 0 ... 1
+
+                // Antialiasing loops
+                for(int ai = 0; ai < params.antialias; ai++) {
+                    //x = x0 + ai / dx; // 0 ... 1
+
+                    // Calculate latitude and longitude
+                    //longitude = x * TWOPI - M_PI;    // -pi ... pi
+                    //latitude = y * M_PI - M_PI/2;    // -pi/2 ... pi/2
+                    int face = lltable[itable].face;
+                    UV uv = lltable[itable].uv;
+                    itable++;
+
+                    // Sum over the supersampling set
+                    BITMAP4 c = GetColour(face, uv, frame_input1, frame_input2);
+                    csum.r += c.r;
+                    csum.g += c.g;
+                    csum.b += c.b;
+                }
+            }
+
+            // Finally update the spherical image
+            int index = j * params.outwidth + i;
+            frame_spherical[index].r = csum.r / params.antialias2;
+            frame_spherical[index].g = csum.g / params.antialias2;
+            frame_spherical[index].b = csum.b / params.antialias2;
+        }
+    }
+
+    if(params.debug) { fprintf(stderr, "%s() - Processing time: %g seconds\n", progName, GetRunTime() - starttime); }
+
+    // Write out the equirectangular
+    // Base the name on the name of the first frame
+    if(params.debug) fprintf(stderr, "%s() - Saving equirectangular\n", progName);
+    WriteSpherical(fname1, nframe, frame_spherical, params.outwidth, params.outheight);
+}
+
 
 /*
     Check the frames
