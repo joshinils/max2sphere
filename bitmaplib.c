@@ -1398,7 +1398,7 @@ int Read_UInt(FILE* fptr, unsigned int* n, int swap) {
 }
 
 #ifdef ADDJPEG
-int IsJPEG(char* fname) {
+int IsJPEG(const char* fname) {
     char s[256];
 
     strcpy(s, fname);
@@ -1565,7 +1565,7 @@ int JPEG_Read(FILE* fptr, BITMAP4* image, int* width, int* height) {
 #endif
 
 #ifdef ADDPNG
-int IsPNG(char* fname) {
+int IsPNG(const char* fname) {
     char s[256];
 
     strcpy(s, fname);
@@ -1674,7 +1674,7 @@ int PNG_Read(FILE* fptr, BITMAP4* image, int* owidth, int* oheight) {
     return (0);
 }
 
-int PNG_Write(FILE* fptr, BITMAP4* image, int width, int height, int flip) {
+int PNG_Write(FILE* fptr, const BITMAP4* image, int width, int height, int flip) {
     int index;
 
     png_structp png = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);

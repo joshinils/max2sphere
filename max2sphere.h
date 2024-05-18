@@ -45,10 +45,10 @@ typedef struct {
 } FRAMESPECS;
 
 // Prototypes
-void set_frame_filename_from_template(char*, char*, int, char*);
+void set_frame_filename_from_template(char*, char*, int, const char*);
 void process_single_image(int, const char*, const char*);
 int CheckFrames(const char*, const char*, int*, int*);
-int WriteSpherical(char*, int, BITMAP4*, int, int);
+int WriteSpherical(const char*, int, const BITMAP4*, int, int);
 int ReadFrame(BITMAP4*, char*, int, int);
 int FindFaceUV(double, double, UV*);
 BITMAP4 GetColour(int, UV, BITMAP4*, BITMAP4*);

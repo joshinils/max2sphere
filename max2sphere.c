@@ -116,14 +116,14 @@ int main(int argc, char** argv) {
 
     // Process each frame of the sequence
     for(int nframe = params.nstart; nframe <= params.nstop; nframe++) {
-        process_single_image(fname2, argv[0], argv[argc - 1]);
+        process_single_image(nframe, argv[0], argv[argc - 1]);
     }
 
     exit(0);
 }
 
 
-void set_frame_filename_from_template(char* fname1, char* fname2, int nframe, char* last_argument) {
+void set_frame_filename_from_template(char* fname1, char* fname2, int nframe, const char* last_argument) {
     sprintf(fname1, last_argument, 0, nframe);
     sprintf(fname2, last_argument, 5, nframe);
 }
@@ -222,7 +222,7 @@ int CheckFrames(const char* fname1, const char* fname2, int* width, int* height)
     boolean frame1_is_png = IsPNG(fname1);
     boolean frame2_is_png = IsPNG(fname2);
 
-    if(!frame1_is_jpg && !frame1_is_png || !frame2_is_jpg && !frame2_is_png) {
+    if((!frame1_is_jpg && !frame1_is_png) || (!frame2_is_jpg && !frame2_is_png)) {
         fprintf(stderr, "CheckFrames() - frame name does not look like a jpeg or png file\n");
         return (-1);
     }
@@ -233,7 +233,7 @@ int CheckFrames(const char* fname1, const char* fname2, int* width, int* height)
         fprintf(stderr, "CheckFrames() - Failed to open first frame \"%s\"\n", fname1);
         return (-1);
     }
-    int w1, h1, depth = -1;
+    int w1 = -1, h1 = -1, depth = -1;
     if(frame1_is_jpg) {
         JPEG_Info(fptr, &w1, &h1, &depth);
     } else {
@@ -246,7 +246,7 @@ int CheckFrames(const char* fname1, const char* fname2, int* width, int* height)
         fprintf(stderr, "CheckFrames() - Failed to open second frame \"%s\"\n", fname2);
         return (-1);
     }
-    int w2, h2 = -1;
+    int w2 = -1, h2 = -1;
     if(frame1_is_jpg) {
         JPEG_Info(fptr, &w1, &h1, &depth);
     } else {
@@ -285,7 +285,7 @@ int CheckFrames(const char* fname1, const char* fname2, int* width, int* height)
     The file name is either using the mask params.outfilename which should have a %d for the frame number
     or based upon the basename provided which will have two %d locations for track and framenumber
 */
-int WriteSpherical(char* basename, int nframe, BITMAP4* img, int w, int h) {
+int WriteSpherical(const char* basename, int nframe, const BITMAP4* img, int w, int h) {
     int i;
     FILE* fptr;
     char fname[256];
@@ -332,7 +332,7 @@ int ReadFrame(BITMAP4* img, char* fname, int w, int h) {
     }
 
     // Read image data
-    if(IsJPEG(fname) && JPEG_Read(fptr, img, &w, &h) != 0 || IsPNG(fname) && PNG_Read(fptr, img, &w, &h) != 0) {
+    if((IsJPEG(fname) && JPEG_Read(fptr, img, &w, &h) != 0) || (IsPNG(fname) && PNG_Read(fptr, img, &w, &h) != 0)) {
         fprintf(stderr, "ReadFrame() - Failed to correctly read JPG/PNG file \"%s\"\n", fname);
         return (FALSE);
     }
