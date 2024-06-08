@@ -136,7 +136,7 @@ void TGA_MergeBytes(BITMAP4*, unsigned char*, int);
 void WriteTGACompressedRow(FILE*, BITMAP4*, int, int);
 
 int BMP_Info(FILE*, int*, int*, int*);
-int BMP_Read(FILE*, BITMAP4*, int*, int*);
+int BMP_Read(FILE*, BITMAP4*, size_t*, size_t*);
 
 int IsPPM(char*);
 int PPM_Info(FILE*, int*, int*, int*);

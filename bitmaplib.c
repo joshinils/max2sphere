@@ -1207,8 +1207,7 @@ int BMP_Info(FILE* fptr, int* width, int* height, int* depth) {
       2 - Failed to read colour information
       3 - Failed to read image data
 */
-int BMP_Read(FILE* fptr, BITMAP4* image, int* width, int* height) {
-    int i, j;
+int BMP_Read(FILE* fptr, BITMAP4* image, size_t* width, size_t* height) {
     unsigned char grey, r, g, b, a;
     HEADER header;
     INFOHEADER infoheader;
@@ -1230,14 +1229,14 @@ int BMP_Read(FILE* fptr, BITMAP4* image, int* width, int* height) {
     if(infoheader.height < 0) flip = TRUE;
 
     // Read the lookup table if there is one
-    for(i = 0; i < 255; i++) {
+    for(size_t i = 0; i < 255; i++) {
         colourindex[i].r = rand() % 256;
         colourindex[i].g = rand() % 256;
         colourindex[i].b = rand() % 256;
         colourindex[i].junk = rand() % 256;
     }
     if(infoheader.ncolours > 0) {
-        for(i = 0; i < (int)infoheader.ncolours; i++) {
+        for(size_t i = 0; i < (size_t)infoheader.ncolours; i++) {
             if(fread(&colourindex[i].b, sizeof(unsigned char), 1, fptr) != 1) return (1);
             if(fread(&colourindex[i].g, sizeof(unsigned char), 1, fptr) != 1) return (1);
             if(fread(&colourindex[i].r, sizeof(unsigned char), 1, fptr) != 1) return (1);
@@ -1250,8 +1249,8 @@ int BMP_Read(FILE* fptr, BITMAP4* image, int* width, int* height) {
     fseek(fptr, header.offset, SEEK_SET);
 
     // Read the image
-    for(j = 0; j < (*height); j++) {
-        for(i = 0; i < (*width); i++) {
+    for(size_t j = 0; j < (*height); j++) {
+        for(size_t i = 0; i < (*width); i++) {
             switch(infoheader.bits) {
             case 1: break;
             case 4: break;
