@@ -25,7 +25,42 @@ int ntable = 0;
 int itable = 0;
 
 
+void test_read_from_stdin(){
+    size_t w = 1344 * 4096;
+    size_t h = 1;
+
+    BITMAP4* img = Create_Bitmap(w, h);
+
+    FILE* fptr;
+
+    for(size_t img_count = 0; img_count < 4; img_count++) {
+        BMP_Read(stdin, img, &w, &h);
+        fprintf(stderr, "w=\"%li\" h=\"%li\"\n", w, h);
+
+        // Save
+        char fname[256];
+        sprintf(fname, "test_image_%li.bmp", img_count);
+
+        if((fptr = fopen(fname, "wb")) == NULL) {
+            fprintf(stderr, "Failed to open output file \"%s\"\n", fname);
+            exit(13);
+        }
+
+        Write_Bitmap(fptr, img, w, h, 9);
+        fclose(fptr);
+    }
+
+    Destroy_Bitmap(img);
+
+
+    exit(42);
+}
+
+
 int main(int argc, char** argv) {
+    test_read_from_stdin();
+
+
     char tablename[256];
     double x, y, dx, dy, x0, y0, longitude, latitude;
     FILE* fptr;
