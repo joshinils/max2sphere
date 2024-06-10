@@ -27,7 +27,7 @@ typedef struct {
     double a, b, c, d;
 } PLANE;
 
-typedef struct {
+struct PARAMS {
     int outwidth, outheight;
     size_t framewidth, frameheight;
     size_t antialias, antialias2;
@@ -37,30 +37,45 @@ typedef struct {
     boolean debug;
     size_t threads;
     boolean skip_existing;
-} PARAMS;
+    size_t input_buffer_length;
+};
+typedef struct PARAMS PARAMS;
 
-typedef struct {
+struct FRAMESPECS {
     int width, height;
     int sidewidth;
     int centerwidth;
     int blendwidth;
     int equi_width;
-} FRAMESPECS;
+};
+typedef struct FRAMESPECS FRAMESPECS;
 
-typedef struct {
+
+struct buffer_elem {
+    boolean waiting_for_stitch;
+    size_t nframe;
+
+    BITMAP4* frame_input1;
+    BITMAP4* frame_input2;
+};
+typedef struct buffer_elem buffer_elem;
+
+struct THREAD_DATA {
     size_t worker_id;
     pthread_mutex_t* counter_mutex;
     size_t* ip_shared_counter;
     const char* progName;
     const char* last_argument;
+    buffer_elem* input_read_buffer;
+    buffer_elem* input;
 
-    BITMAP4* frame_input1;
-    BITMAP4* frame_input2;
     BITMAP4* frame_spherical;
-} THREAD_DATA;
+};
+typedef struct THREAD_DATA THREAD_DATA;
 
 
 // Prototypes
+
 void* image_processing_worker_function(void* input);
 void set_frame_filename_from_template(char*, char*, int, const char*);
 void process_single_image(THREAD_DATA*, int);

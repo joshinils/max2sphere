@@ -130,8 +130,8 @@ void* image_reader_worker_function(void* input) {
     THREAD_DATA* data = (THREAD_DATA*)input;
 
     // while able to get another image:
-        // wait until image is is small enough
-        // put image into queue
+    // // wait until image is is small enough
+    // // put image into queue
 
     return NULL;
 }
@@ -165,8 +165,10 @@ void init(int argc, char** argv) {
             params.debug = TRUE;
         } else if(strcmp(argv[i], "-F") == 0) {
             params.skip_existing = FALSE;
+        } else if(strcmp(argv[i], "-b") == 0) {
+            params.input_buffer_length = MAX(1, atoi(argv[i + 1]));
         } else if(strcmp(argv[i], "-t") == 0) {
-            params.threads = MAX(1, atoi(argv[i + 1])) + 1;  // +1 for the image reading thread
+            params.threads = MAX(1, atoi(argv[i + 1])) + 1; // +1 for the image reading thread
         }
     }
 
@@ -206,6 +208,8 @@ int main(int argc, char** argv) {
 
     params.threads = MIN(params.threads, params.n_stop);
 
+    buffer_elem input_read_buffer[params.input_buffer_length];
+
     pthread_t thread[params.threads];
     THREAD_DATA data[params.threads];
 
@@ -219,8 +223,8 @@ int main(int argc, char** argv) {
         data[thread_id].ip_shared_counter = &shared_counter;
         data[thread_id].progName = argv[0];
         data[thread_id].last_argument = argv[argc - 1];
-        data[thread_id].frame_input1 = NULL;
-        data[thread_id].frame_input2 = NULL;
+        data[thread_id].input = NULL;
+        data[thread_id].input_read_buffer = &input_read_buffer;
         data[thread_id].frame_spherical = NULL;
     }
 
@@ -237,8 +241,9 @@ int main(int argc, char** argv) {
     // thread_id = 1, since id=0 thread_id is reserved for the image_reading_thread
     for(size_t thread_id = 1; thread_id < params.threads; thread_id++) {
         // Malloc images (once, then reuse in the same thread)
-        data[thread_id].frame_input1 = Create_Bitmap(params.framewidth, params.frameheight);
-        data[thread_id].frame_input2 = Create_Bitmap(params.framewidth, params.frameheight);
+        data[thread_id].input = malloc(sizeof(buffer_elem));
+        data[thread_id].input->frame_input1 = Create_Bitmap(params.framewidth, params.frameheight);
+        data[thread_id].input->frame_input2 = Create_Bitmap(params.framewidth, params.frameheight);
         data[thread_id].frame_spherical = Create_Bitmap(params.outwidth, params.outheight);
 
         int creating_thread_status = pthread_create(&(thread[thread_id]), NULL, image_processing_worker_function, (void*)&data[thread_id]);
@@ -258,8 +263,10 @@ int main(int argc, char** argv) {
     for(size_t thread_id = 0; thread_id < params.threads; ++thread_id) {
         pthread_join(thread[thread_id], NULL);
 
-        Destroy_Bitmap(data[thread_id].frame_input1);
-        Destroy_Bitmap(data[thread_id].frame_input2);
+        Destroy_Bitmap(data[thread_id].input->frame_input1);
+        Destroy_Bitmap(data[thread_id].input->frame_input2);
+        free(data[thread_id].input);
+
         Destroy_Bitmap(data[thread_id].frame_spherical);
 
         if(params.debug) { fprintf(stderr, "Thread: %02li done\n", thread_id); }
@@ -326,12 +333,12 @@ void read_image_pair(const int nframe, THREAD_DATA* data) {
     char fname1[256], fname2[256];
     set_frame_filename_from_template(fname1, fname2, nframe, data->last_argument);
 
-    if(!ReadFrame(data->frame_input1, fname1, params.framewidth, params.frameheight)) {
+    if(!ReadFrame(data->input->frame_input1, fname1, params.framewidth, params.frameheight)) {
         if(params.debug) fprintf(stderr, "%s() T%02li - failed to read frame \"%s\"\n", data->progName, data->worker_id, fname2);
         return;
     }
 
-    if(!ReadFrame(data->frame_input2, fname2, params.framewidth, params.frameheight)) {
+    if(!ReadFrame(data->input->frame_input2, fname2, params.framewidth, params.frameheight)) {
         if(params.debug) fprintf(stderr, "%s() T%02li - failed to read frame \"%s\"\n", data->progName, data->worker_id, fname2);
         return;
     }
@@ -356,7 +363,7 @@ void process_single_image(THREAD_DATA* data, int nframe) {
         }
     }
 
-    if(data->frame_input1 == NULL || data->frame_input2 == NULL || data->frame_spherical == NULL) {
+    if(data->input->frame_input1 == NULL || data->input->frame_input2 == NULL || data->frame_spherical == NULL) {
         fprintf(stderr, "%s() T%02li - Failed to malloc memory for the images\n", data->progName, data->worker_id);
         exit(-1);
     }
@@ -372,7 +379,7 @@ void process_single_image(THREAD_DATA* data, int nframe) {
     read_image_pair(nframe, data);
 
     double starttime = GetRunTime();
-    calc_spherical(data->frame_input1, data->frame_input2, data->frame_spherical);
+    calc_spherical(data->input->frame_input1, data->input->frame_input2, data->frame_spherical);
     if(params.debug) { fprintf(stderr, "%s() T%02li - Processing time: %g seconds\n", data->progName, data->worker_id, GetRunTime() - starttime); }
 
     // Write out the equirectangular
@@ -762,6 +769,7 @@ void init_default_params(void) {
     params.debug = FALSE;
     params.threads = MAX(1, sysconf(_SC_NPROCESSORS_ONLN)) + 1; // +1 for the image reading thread
     params.skip_existing = TRUE;
+    params.input_buffer_length = 1;
 
     // Parameters for the 6 cube planes, ax + by + cz + d = 0
     params.faces[LEFT].a = -1;
@@ -855,4 +863,5 @@ void GiveUsage(char* s) {
     fprintf(stderr, "   -t n      Amount of threads to use,         default: %li\n", params.threads);
     fprintf(stderr, "   -d        Enable debug mode,                default: off\n");
     fprintf(stderr, "   -F        Overwrite existing output images, default: off\n");
+    fprintf(stderr, "   -b        Set input buffer length,          default: %li\n", params.input_buffer_length);
 }
