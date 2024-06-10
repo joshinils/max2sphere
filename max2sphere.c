@@ -1,5 +1,6 @@
 #include "max2sphere.h"
 #include <unistd.h>
+
 /*
     Convert a sequence of pairs of frames from the GoPro MAX camera to an equirectangular
     Sept 08: First version based upon cube2sphere
@@ -25,32 +26,33 @@ int ntable = 0;
 int itable = 0;
 
 
-void test_read_from_stdin(){
-    size_t w = 1344 * 4096;
-    size_t h = 1;
+int read_BMP_stdin(BITMAP4* image, size_t* width, size_t* height) {
+    int ret_code = BMP_Read(stdin, image, width, height);
+    return ret_code;
+}
 
-    BITMAP4* img = Create_Bitmap(w, h);
+void test_read_from_stdin() {
+    size_t width_front = 1344 * 4096;
+    size_t height_front = 1;
 
-    FILE* fptr;
+    size_t width_back = 1344 * 4096;
+    size_t height_back = 1;
 
-    for(size_t img_count = 0; img_count < 4; img_count++) {
-        BMP_Read(stdin, img, &w, &h);
-        fprintf(stderr, "w=\"%li\" h=\"%li\"\n", w, h);
+    BITMAP4* img_front = Create_Bitmap(width_front, height_front);
+    BITMAP4* img_back = Create_Bitmap(width_front, height_front);
 
-        // Save
-        char fname[256];
-        sprintf(fname, "test_image_%li.bmp", img_count);
 
-        if((fptr = fopen(fname, "wb")) == NULL) {
-            fprintf(stderr, "Failed to open output file \"%s\"\n", fname);
-            exit(13);
+    for(size_t img_count = 0; TRUE; ++img_count) {
+        int ret_code_front = read_BMP_stdin(img_front, &width_front, &height_front);
+        int ret_code_back = read_BMP_stdin(img_back, &width_back, &height_back);
+        if(ret_code_front || ret_code_back) {
+            fprintf(stderr, "no image read, assuming stdin finished, stopping\n");
+            break;
         }
-
-        Write_Bitmap(fptr, img, w, h, 9);
-        fclose(fptr);
     }
 
-    Destroy_Bitmap(img);
+    Destroy_Bitmap(img_front);
+    Destroy_Bitmap(img_back);
 
 
     exit(42);
@@ -249,6 +251,54 @@ void* worker_function(void* input) {
 }
 
 
+void prepare_image_data(THREAD_DATA* data, int nframe) { }
+
+
+// calculates spherical image from two input images
+void calc_spherical(BITMAP4* frame_input1, BITMAP4* frame_input2, BITMAP4* spherical_out) {
+    int itable = 0;
+    for(int j = 0; j < params.outheight; ++j) {
+        //y0 = j / (double)params.outheight;
+        //if (params.debug && j % (params.outheight/32) == 0)
+        //fprintf(stderr,"%s() - Scan line %d\n",progName,j);
+
+        for(int i = 0; i < params.outwidth; ++i) {
+            //x0 = i / (double)params.outwidth;
+            COLOUR16 csum = { 0, 0, 0 }; // Supersampling antialising sum
+
+            // Antialiasing loops
+            for(size_t aj = 0; aj < params.antialias; aj++) {
+                //y = y0 + aj / dy; // 0 ... 1
+
+                // Antialiasing loops
+                for(size_t ai = 0; ai < params.antialias; ai++) {
+                    //x = x0 + ai / dx; // 0 ... 1
+
+                    // Calculate latitude and longitude
+                    //longitude = x * TWOPI - M_PI;    // -pi ... pi
+                    //latitude = y * M_PI - M_PI/2;    // -pi/2 ... pi/2
+                    int face = g_lltable[itable].face;
+                    UV uv = g_lltable[itable].uv;
+                    itable++;
+
+                    // Sum over the supersampling set
+                    BITMAP4 c = GetColour(face, uv, frame_input1, frame_input2);
+                    csum.r += c.r;
+                    csum.g += c.g;
+                    csum.b += c.b;
+                }
+            }
+
+            // Finally update the spherical image
+            int index = j * params.outwidth + i;
+            spherical_out[index].r = csum.r / params.antialias2;
+            spherical_out[index].g = csum.g / params.antialias2;
+            spherical_out[index].b = csum.b / params.antialias2;
+        }
+    }
+}
+
+
 void process_single_image(THREAD_DATA* data, int nframe) {
     char fname1[256], fname2[256];
     set_frame_filename_from_template(fname1, fname2, nframe, data->last_argument);
@@ -278,11 +328,12 @@ void process_single_image(THREAD_DATA* data, int nframe) {
     }
 
     // Form the spherical map
-    if(params.debug)
+    if(params.debug) {
         fprintf(stderr, "%s() T%02li - Creating spherical map for frame %d\n", data->progName, data->worker_id, nframe);
-    BITMAP4 black = { 0, 0, 0, 255 };
-    Erase_Bitmap(data->frame_spherical, params.outwidth, params.outheight, black);
 
+        BITMAP4 black = { 0, 0, 0, 255 };
+        Erase_Bitmap(data->frame_spherical, params.outwidth, params.outheight, black);
+    }
     // Read both frames
     if(!ReadFrame(data->frame_input1, fname1, params.framewidth, params.frameheight)) {
         if(params.debug)
@@ -297,47 +348,7 @@ void process_single_image(THREAD_DATA* data, int nframe) {
     }
 
     double starttime = GetRunTime();
-    int itable = 0;
-    for(int j = 0; j < params.outheight; j++) {
-        //y0 = j / (double)params.outheight;
-        //if (params.debug && j % (params.outheight/32) == 0)
-        //fprintf(stderr,"%s() - Scan line %d\n",progName,j);
-
-        for(int i = 0; i < params.outwidth; i++) {
-            //x0 = i / (double)params.outwidth;
-            COLOUR16 csum = { 0, 0, 0 }; // Supersampling antialising sum
-
-            // Antialiasing loops
-            for(size_t aj = 0; aj < params.antialias; aj++) {
-                //y = y0 + aj / dy; // 0 ... 1
-
-                // Antialiasing loops
-                for(size_t ai = 0; ai < params.antialias; ai++) {
-                    //x = x0 + ai / dx; // 0 ... 1
-
-                    // Calculate latitude and longitude
-                    //longitude = x * TWOPI - M_PI;    // -pi ... pi
-                    //latitude = y * M_PI - M_PI/2;    // -pi/2 ... pi/2
-                    int face = g_lltable[itable].face;
-                    UV uv = g_lltable[itable].uv;
-                    itable++;
-
-                    // Sum over the supersampling set
-                    BITMAP4 c = GetColour(face, uv, data->frame_input1, data->frame_input2);
-                    csum.r += c.r;
-                    csum.g += c.g;
-                    csum.b += c.b;
-                }
-            }
-
-            // Finally update the spherical image
-            int index = j * params.outwidth + i;
-            data->frame_spherical[index].r = csum.r / params.antialias2;
-            data->frame_spherical[index].g = csum.g / params.antialias2;
-            data->frame_spherical[index].b = csum.b / params.antialias2;
-        }
-    }
-
+    calc_spherical(data->frame_input1, data->frame_input2, data->frame_spherical);
     if(params.debug) {
         fprintf(stderr,
                 "%s() T%02li - Processing time: %g seconds\n",
