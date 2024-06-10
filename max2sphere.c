@@ -103,11 +103,43 @@ void load_lltable(const char* progName) {
     }
 }
 
-int main(int argc, char** argv) {
-    test_read_from_stdin();
 
+void* image_processing_worker_function(void* input) {
+    // Cast the pointer to the correct type
+    THREAD_DATA* data = (THREAD_DATA*)input;
+
+    for(;;) {
+        pthread_mutex_lock(data->counter_mutex);
+        const size_t nframe = *(data->ip_shared_counter);
+        (*(data->ip_shared_counter))++;
+        pthread_mutex_unlock(data->counter_mutex);
+
+        if(nframe > params.n_stop) { break; }
+
+        if(params.debug) { fprintf(stderr, "%s() T%02li - starting job %li\n", data->progName, data->worker_id, nframe); }
+        process_single_image(data, nframe);
+        if(params.debug) { fprintf(stderr, "%s() T%02li - finished job %li\n", data->progName, data->worker_id, nframe); }
+    }
+    if(params.debug) { fprintf(stderr, "%s() T%02li - finished all jobs\n", data->progName, data->worker_id); }
+    return NULL;
+}
+
+
+void* image_reader_worker_function(void* input) {
+    // Cast the pointer to the correct type
+    THREAD_DATA* data = (THREAD_DATA*)input;
+
+    // while able to get another image:
+        // wait until image is is small enough
+        // put image into queue
+
+    return NULL;
+}
+
+
+void init(int argc, char** argv) {
     // Default settings
-    Init();
+    init_default_params();
 
     // Check and parse command line
     if(argc < 2) {
@@ -134,7 +166,7 @@ int main(int argc, char** argv) {
         } else if(strcmp(argv[i], "-F") == 0) {
             params.skip_existing = FALSE;
         } else if(strcmp(argv[i], "-t") == 0) {
-            params.threads = MAX(1, atoi(argv[i + 1]));
+            params.threads = MAX(1, atoi(argv[i + 1])) + 1;  // +1 for the image reading thread
         }
     }
 
@@ -146,10 +178,8 @@ int main(int argc, char** argv) {
             params.outfilename[0] = '\0';
     }
 
-
-    char fname1[256], fname2[256];
-
     // Check the first frame to determine template and frame sizes
+    char fname1[256], fname2[256];
     set_frame_filename_from_template(fname1, fname2, params.n_start, argv[argc - 1]);
     if((whichtemplate = CheckFrames(fname1, fname2, &params.framewidth, &params.frameheight)) < 0) exit(-1);
     if(params.debug) {
@@ -163,6 +193,13 @@ int main(int argc, char** argv) {
     }
 
     load_lltable(argv[0]);
+}
+
+
+int main(int argc, char** argv) {
+    test_read_from_stdin();
+
+    init(argc, argv);
 
 
     if(params.debug) fprintf(stderr, "%s() - Starting threads\n", argv[0]);
@@ -175,31 +212,46 @@ int main(int argc, char** argv) {
     pthread_mutex_t mutex_counter = PTHREAD_MUTEX_INITIALIZER;
     size_t shared_counter = params.n_start;
 
-    for(size_t thread_id = 0; thread_id < params.threads; thread_id++) {
-        // Initialize the thread data
+    // Initialize the thread data
+    for(size_t thread_id = 0; thread_id < params.threads - 1; thread_id++) {
         data[thread_id].worker_id = thread_id;
         data[thread_id].counter_mutex = &mutex_counter;
         data[thread_id].ip_shared_counter = &shared_counter;
         data[thread_id].progName = argv[0];
         data[thread_id].last_argument = argv[argc - 1];
+        data[thread_id].frame_input1 = NULL;
+        data[thread_id].frame_input2 = NULL;
+        data[thread_id].frame_spherical = NULL;
+    }
 
+    pthread_t image_reader_thread;
+    int creating_thread_status = pthread_create(&(image_reader_thread), NULL, image_reader_worker_function, (void*)&data[0]);
+    if(creating_thread_status) {
+        if(params.debug) { fprintf(stderr, "Error creating image reading thread 00, exiting.\n"); }
+        exit(-1);
+    } else if(params.debug) {
+        if(params.debug) { fprintf(stderr, "%s() - Started image reading thread 00\n", argv[0]); }
+    }
+
+
+    // thread_id = 1, since id=0 thread_id is reserved for the image_reading_thread
+    for(size_t thread_id = 1; thread_id < params.threads; thread_id++) {
         // Malloc images (once, then reuse in the same thread)
         data[thread_id].frame_input1 = Create_Bitmap(params.framewidth, params.frameheight);
         data[thread_id].frame_input2 = Create_Bitmap(params.framewidth, params.frameheight);
         data[thread_id].frame_spherical = Create_Bitmap(params.outwidth, params.outheight);
 
-        int creating_thread_status =
-        pthread_create(&(thread[thread_id]), NULL, worker_function, (void*)&data[thread_id]);
+        int creating_thread_status = pthread_create(&(thread[thread_id]), NULL, image_processing_worker_function, (void*)&data[thread_id]);
         if(creating_thread_status) {
             if(params.debug) { fprintf(stderr, "Error creating thread %02li, exiting.\n", thread_id); }
             exit(-1);
         } else if(params.debug) {
-            if(params.debug) { fprintf(stderr, "%s() - Started Thread %02li\n", argv[0], thread_id); }
+            if(params.debug) { fprintf(stderr, "%s() - Started t %02li\n", argv[0], thread_id); }
         }
 
         if(params.threads > 1) {
             // spread start of threads out a bit so compute and io time do not overlap at the start
-            usleep(1000.0 / (params.threads + 1));
+            usleep(1000.0 / (params.threads));
         }
     }
 
@@ -221,31 +273,6 @@ int main(int argc, char** argv) {
 void set_frame_filename_from_template(char* fname1, char* fname2, int nframe, const char* last_argument) {
     sprintf(fname1, last_argument, 0, nframe);
     sprintf(fname2, last_argument, 5, nframe);
-}
-
-
-void* worker_function(void* input) {
-    // Cast the pointer to the correct type
-    THREAD_DATA* data = (THREAD_DATA*)input;
-
-    for(;;) {
-        pthread_mutex_lock(data->counter_mutex);
-        size_t nframe = *(data->ip_shared_counter);
-        (*(data->ip_shared_counter))++;
-        pthread_mutex_unlock(data->counter_mutex);
-
-        if(nframe > params.n_stop) { break; }
-
-        if(params.debug) {
-            fprintf(stderr, "%s() T%02li - starting job %li\n", data->progName, data->worker_id, nframe);
-        }
-        process_single_image(data, nframe);
-        if(params.debug) {
-            fprintf(stderr, "%s() T%02li - finished job %li\n", data->progName, data->worker_id, nframe);
-        }
-    }
-    if(params.debug) { fprintf(stderr, "%s() T%02li - finished all jobs\n", data->progName, data->worker_id); }
-    return NULL;
 }
 
 
@@ -300,14 +327,12 @@ void read_image_pair(const int nframe, THREAD_DATA* data) {
     set_frame_filename_from_template(fname1, fname2, nframe, data->last_argument);
 
     if(!ReadFrame(data->frame_input1, fname1, params.framewidth, params.frameheight)) {
-        if(params.debug)
-            fprintf(stderr, "%s() T%02li - failed to read frame \"%s\"\n", data->progName, data->worker_id, fname2);
+        if(params.debug) fprintf(stderr, "%s() T%02li - failed to read frame \"%s\"\n", data->progName, data->worker_id, fname2);
         return;
     }
 
     if(!ReadFrame(data->frame_input2, fname2, params.framewidth, params.frameheight)) {
-        if(params.debug)
-            fprintf(stderr, "%s() T%02li - failed to read frame \"%s\"\n", data->progName, data->worker_id, fname2);
+        if(params.debug) fprintf(stderr, "%s() T%02li - failed to read frame \"%s\"\n", data->progName, data->worker_id, fname2);
         return;
     }
 }
@@ -324,13 +349,7 @@ void process_single_image(THREAD_DATA* data, int nframe) {
         create_output_filename(fname_out, fname1, nframe);
 
         if(access(fname_out, F_OK) == 0) {
-            if(params.debug) {
-                fprintf(stderr,
-                        "%s() T%02li - skipping frame, already exists \"%s\"\n",
-                        data->progName,
-                        data->worker_id,
-                        fname_out);
-            }
+            if(params.debug) { fprintf(stderr, "%s() T%02li - skipping frame, already exists \"%s\"\n", data->progName, data->worker_id, fname_out); }
             return;
         } else if(params.debug) {
             fprintf(stderr, "%s() T%02li - NOT skipping frame \"%s\"\n", data->progName, data->worker_id, fname_out);
@@ -354,13 +373,7 @@ void process_single_image(THREAD_DATA* data, int nframe) {
 
     double starttime = GetRunTime();
     calc_spherical(data->frame_input1, data->frame_input2, data->frame_spherical);
-    if(params.debug) {
-        fprintf(stderr,
-                "%s() T%02li - Processing time: %g seconds\n",
-                data->progName,
-                data->worker_id,
-                GetRunTime() - starttime);
-    }
+    if(params.debug) { fprintf(stderr, "%s() T%02li - Processing time: %g seconds\n", data->progName, data->worker_id, GetRunTime() - starttime); }
 
     // Write out the equirectangular
     // Base the name on the name of the first frame
@@ -478,9 +491,7 @@ int WriteSpherical(const char* basename, int nframe, const BITMAP4* img, int w, 
         return (FALSE);
     }
 
-    if(PNG_Write(fptr, img, w, h, FALSE)) {
-        fprintf(stderr, "WriteSpherical() - Failed to write output file \"%s\"\n", fname_out);
-    }
+    if(PNG_Write(fptr, img, w, h, FALSE)) { fprintf(stderr, "WriteSpherical() - Failed to write output file \"%s\"\n", fname_out); }
     fclose(fptr);
 
     return (TRUE);
@@ -738,7 +749,7 @@ void RotateUV90(UV* uv) {
 /*
     Initialise parameters structure
 */
-void Init(void) {
+void init_default_params(void) {
     params.outwidth = -1;
     params.outheight = -1;
     params.framewidth = -1;
@@ -749,7 +760,7 @@ void Init(void) {
     params.n_stop = 100000;
     params.outfilename[0] = '\0';
     params.debug = FALSE;
-    params.threads = MAX(1, sysconf(_SC_NPROCESSORS_ONLN));
+    params.threads = MAX(1, sysconf(_SC_NPROCESSORS_ONLN)) + 1; // +1 for the image reading thread
     params.skip_existing = TRUE;
 
     // Parameters for the 6 cube planes, ax + by + cz + d = 0

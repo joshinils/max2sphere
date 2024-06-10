@@ -61,7 +61,7 @@ typedef struct {
 
 
 // Prototypes
-void* worker_function(void* input);
+void* image_processing_worker_function(void* input);
 void set_frame_filename_from_template(char*, char*, int, const char*);
 void process_single_image(THREAD_DATA*, int);
 int CheckFrames(const char*, const char*, size_t*, size_t*);
@@ -74,6 +74,6 @@ int CheckTemplate(char*, int);
 
 BITMAP4 ColourBlend(BITMAP4, BITMAP4, double);
 void RotateUV90(UV*);
-void Init(void);
+void init_default_params(void);
 double GetRunTime(void);
 void GiveUsage(char*);
