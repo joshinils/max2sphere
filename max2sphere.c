@@ -59,13 +59,52 @@ void test_read_from_stdin() {
 }
 
 
+void load_lltable(const char* progName) {
+    // Does a table exist? If it does, load it. if not, create it and save it
+    ntable = params.outheight * params.outwidth * params.antialias * params.antialias;
+    g_lltable = malloc(ntable * sizeof(LLTABLE));
+    char tablename[256];
+    sprintf(tablename, "%d_%d_%d_%li.data", whichtemplate, params.outwidth, params.outheight, params.antialias);
+    FILE* fptr;
+    int n = 0;
+    if((fptr = fopen(tablename, "r")) != NULL) {
+        if(params.debug) fprintf(stderr, "%s() - Reading lookup table\n", progName);
+        if((n = fread(g_lltable, sizeof(LLTABLE), ntable, fptr)) != ntable) {
+            fprintf(stderr, "%s() - Failed to read lookup table \"%s\" (%d != %d)\n", progName, tablename, n, ntable);
+        }
+        fclose(fptr);
+    }
+
+    if(n != ntable) {
+        if(params.debug) fprintf(stderr, "%s() - Generating lookup table\n", progName);
+        double dx = params.antialias * params.outwidth;
+        double dy = params.antialias * params.outheight;
+        itable = 0;
+        for(int j = 0; j < params.outheight; j++) {
+            double y0 = j / (double)params.outheight;
+            for(int i = 0; i < params.outwidth; i++) {
+                double x0 = i / (double)params.outwidth;
+                for(size_t aj = 0; aj < params.antialias; aj++) {
+                    double y = y0 + aj / dy; // 0 ... 1
+                    for(size_t ai = 0; ai < params.antialias; ai++) {
+                        double x = x0 + ai / dx; // 0 ... 1
+                        double longitude = x * TWOPI - M_PI; // -pi ... pi
+                        double latitude = y * M_PI - M_PI / 2; // -pi/2 ... pi/2
+                        g_lltable[itable].face = FindFaceUV(longitude, latitude, &(g_lltable[itable].uv));
+                        itable++;
+                    }
+                }
+            }
+        }
+        if(params.debug) fprintf(stderr, "%s() - Saving lookup table\n", progName);
+        fptr = fopen(tablename, "w");
+        fwrite(g_lltable, ntable, sizeof(LLTABLE), fptr);
+        fclose(fptr);
+    }
+}
+
 int main(int argc, char** argv) {
     test_read_from_stdin();
-
-
-    char tablename[256];
-    double x, y, dx, dy, x0, y0, longitude, latitude;
-    FILE* fptr;
 
     // Default settings
     Init();
@@ -110,12 +149,8 @@ int main(int argc, char** argv) {
 
     char fname1[256], fname2[256];
 
-
     // Check the first frame to determine template and frame sizes
     set_frame_filename_from_template(fname1, fname2, params.n_start, argv[argc - 1]);
-    // sprintf(fname1, argv[argc - 1], 0, params.n_start);
-    // sprintf(fname2, argv[argc - 1], 5, params.n_start);
-    // if(params.debug) fprintf(stderr, "fname1=%s fname2=%s\n", fname1, fname2);
     if((whichtemplate = CheckFrames(fname1, fname2, &params.framewidth, &params.frameheight)) < 0) exit(-1);
     if(params.debug) {
         fprintf(stderr, "%s() - frame dimensions: %li × %li\n", argv[0], params.framewidth, params.frameheight);
@@ -127,44 +162,7 @@ int main(int argc, char** argv) {
         params.outheight = params.outwidth / 2;
     }
 
-    // Does a table exist? If it does, load it. if not, create it and save it
-    ntable = params.outheight * params.outwidth * params.antialias * params.antialias;
-    g_lltable = malloc(ntable * sizeof(LLTABLE));
-    sprintf(tablename, "%d_%d_%d_%li.data", whichtemplate, params.outwidth, params.outheight, params.antialias);
-    int n = 0;
-    if((fptr = fopen(tablename, "r")) != NULL) {
-        if(params.debug) fprintf(stderr, "%s() - Reading lookup table\n", argv[0]);
-        if((n = fread(g_lltable, sizeof(LLTABLE), ntable, fptr)) != ntable) {
-            fprintf(stderr, "%s() - Failed to read lookup table \"%s\" (%d != %d)\n", argv[0], tablename, n, ntable);
-        }
-        fclose(fptr);
-    }
-    if(n != ntable) {
-        if(params.debug) fprintf(stderr, "%s() - Generating lookup table\n", argv[0]);
-        dx = params.antialias * params.outwidth;
-        dy = params.antialias * params.outheight;
-        itable = 0;
-        for(int j = 0; j < params.outheight; j++) {
-            y0 = j / (double)params.outheight;
-            for(int i = 0; i < params.outwidth; i++) {
-                x0 = i / (double)params.outwidth;
-                for(size_t aj = 0; aj < params.antialias; aj++) {
-                    y = y0 + aj / dy; // 0 ... 1
-                    for(size_t ai = 0; ai < params.antialias; ai++) {
-                        x = x0 + ai / dx; // 0 ... 1
-                        longitude = x * TWOPI - M_PI; // -pi ... pi
-                        latitude = y * M_PI - M_PI / 2; // -pi/2 ... pi/2
-                        g_lltable[itable].face = FindFaceUV(longitude, latitude, &(g_lltable[itable].uv));
-                        itable++;
-                    }
-                }
-            }
-        }
-        if(params.debug) fprintf(stderr, "%s() - Saving lookup table\n", argv[0]);
-        fptr = fopen(tablename, "w");
-        fwrite(g_lltable, ntable, sizeof(LLTABLE), fptr);
-        fclose(fptr);
-    }
+    load_lltable(argv[0]);
 
 
     if(params.debug) fprintf(stderr, "%s() - Starting threads\n", argv[0]);
@@ -251,9 +249,6 @@ void* worker_function(void* input) {
 }
 
 
-void prepare_image_data(THREAD_DATA* data, int nframe) { }
-
-
 // calculates spherical image from two input images
 void calc_spherical(BITMAP4* frame_input1, BITMAP4* frame_input2, BITMAP4* spherical_out) {
     int itable = 0;
@@ -299,10 +294,30 @@ void calc_spherical(BITMAP4* frame_input1, BITMAP4* frame_input2, BITMAP4* spher
 }
 
 
+// Read both frames
+void read_image_pair(const int nframe, THREAD_DATA* data) {
+    char fname1[256], fname2[256];
+    set_frame_filename_from_template(fname1, fname2, nframe, data->last_argument);
+
+    if(!ReadFrame(data->frame_input1, fname1, params.framewidth, params.frameheight)) {
+        if(params.debug)
+            fprintf(stderr, "%s() T%02li - failed to read frame \"%s\"\n", data->progName, data->worker_id, fname2);
+        return;
+    }
+
+    if(!ReadFrame(data->frame_input2, fname2, params.framewidth, params.frameheight)) {
+        if(params.debug)
+            fprintf(stderr, "%s() T%02li - failed to read frame \"%s\"\n", data->progName, data->worker_id, fname2);
+        return;
+    }
+}
+
+
 void process_single_image(THREAD_DATA* data, int nframe) {
     char fname1[256], fname2[256];
     set_frame_filename_from_template(fname1, fname2, nframe, data->last_argument);
 
+    // skip calculation of frame if output file exists
     if(params.skip_existing) {
         // Create the output file name
         char fname_out[256];
@@ -334,18 +349,8 @@ void process_single_image(THREAD_DATA* data, int nframe) {
         BITMAP4 black = { 0, 0, 0, 255 };
         Erase_Bitmap(data->frame_spherical, params.outwidth, params.outheight, black);
     }
-    // Read both frames
-    if(!ReadFrame(data->frame_input1, fname1, params.framewidth, params.frameheight)) {
-        if(params.debug)
-            fprintf(stderr, "%s() T%02li - failed to read frame \"%s\"\n", data->progName, data->worker_id, fname2);
-        return;
-    }
 
-    if(!ReadFrame(data->frame_input2, fname2, params.framewidth, params.frameheight)) {
-        if(params.debug)
-            fprintf(stderr, "%s() T%02li - failed to read frame \"%s\"\n", data->progName, data->worker_id, fname2);
-        return;
-    }
+    read_image_pair(nframe, data);
 
     double starttime = GetRunTime();
     calc_spherical(data->frame_input1, data->frame_input2, data->frame_spherical);
@@ -438,18 +443,18 @@ int CheckFrames(const char* fname1, const char* fname2, size_t* width, size_t* h
 }
 
 // params.skip_existing
-void create_output_filename(char* fname, const char* basename, int nframe) {
+void create_output_filename(char* fname_out, const char* basename, int nframe) {
     if(strlen(params.outfilename) < 2) {
-        sprintf(fname, basename, 0, nframe);
-        for(int i = strlen(fname) - 1; i > 0; i--) {
-            if(fname[i] == '.') {
-                fname[i] = '\0';
+        sprintf(fname_out, basename, 0, nframe);
+        for(int i = strlen(fname_out) - 1; i > 0; i--) {
+            if(fname_out[i] == '.') {
+                fname_out[i] = '\0';
                 break;
             }
         }
-        strcat(fname, "_sphere.png");
+        strcat(fname_out, "_sphere.png");
     } else {
-        sprintf(fname, params.outfilename, nframe);
+        sprintf(fname_out, params.outfilename, nframe);
     }
 }
 
@@ -461,20 +466,20 @@ void create_output_filename(char* fname, const char* basename, int nframe) {
 */
 int WriteSpherical(const char* basename, int nframe, const BITMAP4* img, int w, int h) {
     // Create the output file name
-    char fname[256];
-    create_output_filename(fname, basename, nframe);
+    char fname_out[256];
+    create_output_filename(fname_out, basename, nframe);
 
-    if(params.debug) fprintf(stderr, "WriteSpherical() - Saving file \"%s\"\n", fname);
+    if(params.debug) fprintf(stderr, "WriteSpherical() - Saving file \"%s\"\n", fname_out);
 
     // Save
     FILE* fptr;
-    if((fptr = fopen(fname, "wb")) == NULL) {
-        fprintf(stderr, "WriteSpherical() - Failed to open output file \"%s\"\n", fname);
+    if((fptr = fopen(fname_out, "wb")) == NULL) {
+        fprintf(stderr, "WriteSpherical() - Failed to open output file \"%s\"\n", fname_out);
         return (FALSE);
     }
 
     if(PNG_Write(fptr, img, w, h, FALSE)) {
-        fprintf(stderr, "WriteSpherical() - Failed to write output file \"%s\"\n", fname);
+        fprintf(stderr, "WriteSpherical() - Failed to write output file \"%s\"\n", fname_out);
     }
     fclose(fptr);
 
