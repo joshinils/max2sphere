@@ -52,6 +52,7 @@ typedef struct FRAMESPECS FRAMESPECS;
 
 
 struct buffer_elem {
+    pthread_mutex_t mutex;
     boolean waiting_for_stitch;
     size_t nframe;
 
@@ -62,8 +63,8 @@ typedef struct buffer_elem buffer_elem;
 
 struct THREAD_DATA {
     size_t worker_id;
-    pthread_mutex_t* counter_mutex;
-    size_t* ip_shared_counter;
+    pthread_mutex_t* input_exhausted_mutex;
+    boolean* input_exhausted;
     const char* progName;
     const char* last_argument;
     buffer_elem* input_read_buffer;
@@ -76,13 +77,14 @@ typedef struct THREAD_DATA THREAD_DATA;
 
 // Prototypes
 
+int read_image_pair(const int nframe, THREAD_DATA* data);
 void* image_processing_worker_function(void* input);
 void set_frame_filename_from_template(char*, char*, int, const char*);
-void process_single_image(THREAD_DATA*, int);
+void process_single_image(THREAD_DATA*);
 int CheckFrames(const char*, const char*, size_t*, size_t*);
 void create_output_filename(char*, const char*, int);
 int WriteSpherical(const char*, int, const BITMAP4*, int, int);
-int ReadFrame(BITMAP4*, char*, int, int);
+int ReadFrame(BITMAP4*, char*, size_t*, size_t*);
 int FindFaceUV(double, double, UV*);
 BITMAP4 GetColour(int, UV, BITMAP4*, BITMAP4*);
 int CheckTemplate(char*, int);

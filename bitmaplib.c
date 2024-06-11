@@ -7,12 +7,22 @@
 /*
    Create a bitmap structure
 */
-BITMAP4* Create_Bitmap(int nx, int ny) { return ((BITMAP4*)malloc(nx * ny * sizeof(BITMAP4))); }
+BITMAP4* Create_Bitmap(int nx, int ny) {
+    BITMAP4* ptr = ((BITMAP4*)malloc(nx * ny * sizeof(BITMAP4)));
+    if(ptr == NULL) {
+        fprintf(stderr, "Create_Bitmap() - Failed to malloc memory for the image\n");
+        exit(-1);
+    }
+    return ptr;
+}
 
 /*
    Destroy the bitmap structure
 */
-void Destroy_Bitmap(BITMAP4* bm) { free(bm); }
+void Destroy_Bitmap(BITMAP4* bm) {
+    free(bm);
+    bm = NULL;
+}
 
 /*
    Compare two pixels
@@ -710,12 +720,10 @@ void Draw_ModLine(BITMAP4* bm, int nx, int ny, int x1, int y1, int x2, int y2, B
         col1 = bm[index]; // Existing colour
         switch(mod) {
         case 1: // Lighter
-            if(col1.r * col1.r + col1.g * col1.g + col1.b * col1.b <= col.r * col.r + col.g * col.g + col.b * col.b)
-                bm[index] = col;
+            if(col1.r * col1.r + col1.g * col1.g + col1.b * col1.b <= col.r * col.r + col.g * col.g + col.b * col.b) bm[index] = col;
             break;
         case 2: // Darker
-            if(col1.r * col1.r + col1.g * col1.g + col1.b * col1.b >= col.r * col.r + col.g * col.g + col.b * col.b)
-                bm[index] = col;
+            if(col1.r * col1.r + col1.g * col1.g + col1.b * col1.b >= col.r * col.r + col.g * col.g + col.b * col.b) bm[index] = col;
             break;
         case 0:
         default: bm[index] = col; break;
@@ -891,16 +899,10 @@ int TGA_Read(FILE* fptr, BITMAP4* image, int* width, int* height) {
         9 - rle index colour (unsupported)
        11 - rle black and white
     */
-    if(header.datatypecode != 1 && header.datatypecode != 2 && header.datatypecode != 3 && header.datatypecode != 11
-       && header.datatypecode != 10) {
-        return (1);
-    }
+    if(header.datatypecode != 1 && header.datatypecode != 2 && header.datatypecode != 3 && header.datatypecode != 11 && header.datatypecode != 10) { return (1); }
 
     /* Can only handle pixel depths of 8, 16, 24, and 32 */
-    if(header.bitsperpixel != 8 && header.bitsperpixel != 16 && header.bitsperpixel != 24
-       && header.bitsperpixel != 32) {
-        return (2);
-    }
+    if(header.bitsperpixel != 8 && header.bitsperpixel != 16 && header.bitsperpixel != 24 && header.bitsperpixel != 32) { return (2); }
 
     /*
        Can only handle colour map types of 0 and 1
@@ -1515,7 +1517,7 @@ int JPEG_Info(FILE* fptr, int* width, int* height, int* depth) {
 /*
    Read a JPEG image
 */
-int JPEG_Read(FILE* fptr, BITMAP4* image, int* width, int* height) {
+int JPEG_Read(FILE* fptr, BITMAP4* image, size_t* width_out, size_t* height_out) {
     int j;
     int row_stride;
     struct jpeg_decompress_struct cinfo;
@@ -1532,8 +1534,8 @@ int JPEG_Read(FILE* fptr, BITMAP4* image, int* width, int* height) {
     jpeg_read_header(&cinfo, TRUE);
     jpeg_start_decompress(&cinfo);
 
-    *width = cinfo.output_width;
-    *height = cinfo.output_height;
+    *width_out = cinfo.output_width;
+    *height_out = cinfo.output_height;
 
     // Can only handle RGB JPEG images at this stage
     if(cinfo.output_components != 3) return (1);
@@ -1609,7 +1611,7 @@ int PNG_Info(FILE* fptr, int* width, int* height, int* depth) {
       2 - Failed to read colour information
       3 - Failed to read image data
 */
-int PNG_Read(FILE* fptr, BITMAP4* image, int* owidth, int* oheight) {
+int PNG_Read(FILE* fptr, BITMAP4* image, size_t* width_out, size_t* height_out) {
     int index;
 
     png_structp png = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
@@ -1640,9 +1642,7 @@ int PNG_Read(FILE* fptr, BITMAP4* image, int* owidth, int* oheight) {
     if(png_get_valid(png, info, PNG_INFO_tRNS)) png_set_tRNS_to_alpha(png);
 
     // These color_type don't have an alpha channel then fill it with 0xff.
-    if(color_type == PNG_COLOR_TYPE_RGB || color_type == PNG_COLOR_TYPE_GRAY || color_type == PNG_COLOR_TYPE_PALETTE) {
-        png_set_filler(png, 0xFF, PNG_FILLER_AFTER);
-    }
+    if(color_type == PNG_COLOR_TYPE_RGB || color_type == PNG_COLOR_TYPE_GRAY || color_type == PNG_COLOR_TYPE_PALETTE) { png_set_filler(png, 0xFF, PNG_FILLER_AFTER); }
     if(color_type == PNG_COLOR_TYPE_GRAY || color_type == PNG_COLOR_TYPE_GRAY_ALPHA) png_set_gray_to_rgb(png);
 
     png_read_update_info(png, info);
@@ -1668,8 +1668,8 @@ int PNG_Read(FILE* fptr, BITMAP4* image, int* owidth, int* oheight) {
     for(y = 0; y < height; y++) free(row_pointers[y]);
     free(row_pointers);
 
-    *owidth = width;
-    *oheight = height;
+    *width_out = width;
+    *height_out = height;
     return (0);
 }
 
@@ -1687,15 +1687,7 @@ int PNG_Write(FILE* fptr, const BITMAP4* image, int width, int height, int flip)
     png_init_io(png, fptr);
 
     // Output is 8bit depth, RGBA format.
-    png_set_IHDR(png,
-                 info,
-                 width,
-                 height,
-                 8,
-                 PNG_COLOR_TYPE_RGBA,
-                 PNG_INTERLACE_NONE,
-                 PNG_COMPRESSION_TYPE_DEFAULT,
-                 PNG_FILTER_TYPE_DEFAULT);
+    png_set_IHDR(png, info, width, height, 8, PNG_COLOR_TYPE_RGBA, PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT);
     png_write_info(png, info);
 
     int x, y;

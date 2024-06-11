@@ -54,7 +54,6 @@ void test_read_from_stdin() {
     Destroy_Bitmap(img_front);
     Destroy_Bitmap(img_back);
 
-
     exit(42);
 }
 
@@ -109,19 +108,75 @@ void* image_processing_worker_function(void* input) {
     THREAD_DATA* data = (THREAD_DATA*)input;
 
     for(;;) {
-        pthread_mutex_lock(data->counter_mutex);
-        const size_t nframe = *(data->ip_shared_counter);
-        (*(data->ip_shared_counter))++;
-        pthread_mutex_unlock(data->counter_mutex);
+        pthread_mutex_lock(data->input_exhausted_mutex);
+        const boolean input_exhausted = *(data->input_exhausted);
+        pthread_mutex_unlock(data->input_exhausted_mutex);
+        if(input_exhausted) { break; }
 
-        if(nframe > params.n_stop) { break; }
+        // TODO nframe >? params.n_stop
 
-        if(params.debug) { fprintf(stderr, "%s() T%02li - starting job %li\n", data->progName, data->worker_id, nframe); }
-        process_single_image(data, nframe);
-        if(params.debug) { fprintf(stderr, "%s() T%02li - finished job %li\n", data->progName, data->worker_id, nframe); }
+        process_single_image(data);
     }
     if(params.debug) { fprintf(stderr, "%s() T%02li - finished all jobs\n", data->progName, data->worker_id); }
     return NULL;
+}
+
+
+void swap_bitmap4_p(BITMAP4* a, BITMAP4* b) {
+    BITMAP4* swap = a;
+    a = b;
+    b = swap;
+}
+
+
+int take_image_pair_from_buffer(THREAD_DATA* data) {
+    // TODO lock whole buffer for taking
+
+    // take the smallest nframe value, since that will be needed for output the earliest,
+    // since the order in which they are stored in the buffer is not guaranteed
+    size_t smallest_nframe_index = -1; // max val
+    size_t smallest_nframe = -1;
+
+    // search for smallest valid buffer element
+    while(smallest_nframe_index > params.input_buffer_length) {
+        for(size_t i = 0; i < params.input_buffer_length; ++i) {
+            pthread_mutex_lock(&data->input_read_buffer[i].mutex);
+            if(!data->input_read_buffer[i].waiting_for_stitch) {
+                // if the buffer element has no valid image pair, skip it
+                pthread_mutex_unlock(&data->input_read_buffer[i].mutex);
+                continue;
+            }
+
+            if(data->input_read_buffer[i].nframe < smallest_nframe) {
+                smallest_nframe = data->input_read_buffer[i].nframe;
+                smallest_nframe_index = i;
+            }
+            pthread_mutex_unlock(&data->input_read_buffer[i].mutex);
+        }
+    }
+    swap_bitmap4_p(data->input->frame_input1, data->input_read_buffer[smallest_nframe_index].frame_input1);
+    swap_bitmap4_p(data->input->frame_input2, data->input_read_buffer[smallest_nframe_index].frame_input2);
+    data->input_read_buffer[smallest_nframe_index].waiting_for_stitch = FALSE;
+    // TODO unlock whole buffer from taking
+    return smallest_nframe;
+}
+
+
+void mark_input_as_exhausted(THREAD_DATA* data) {
+    // TODO: don't keep looping and polling the buffer, instead use pthread_cond_t for each element and wait for each once
+    for(;;) {
+        boolean all_done = TRUE;
+        for(size_t i = 0; i < params.input_buffer_length; ++i) {
+            pthread_mutex_lock(&data->input_read_buffer[i].mutex);
+            all_done = all_done && data->input_read_buffer[i].waiting_for_stitch;
+            pthread_mutex_unlock(&data->input_read_buffer[i].mutex);
+            if(!all_done) { break; }
+        }
+        if(all_done) { break; }
+    }
+    pthread_mutex_lock(data->input_exhausted_mutex);
+    *(data->input_exhausted) = TRUE;
+    pthread_mutex_unlock(data->input_exhausted_mutex);
 }
 
 
@@ -129,10 +184,35 @@ void* image_reader_worker_function(void* input) {
     // Cast the pointer to the correct type
     THREAD_DATA* data = (THREAD_DATA*)input;
 
-    // while able to get another image:
-    // // wait until image is is small enough
-    // // put image into queue
+    // while true with a counter:
+    for(size_t nframe = 0; TRUE; ++nframe) {
+        for(size_t i = 0; i < params.input_buffer_length; ++i) {
+            if(!pthread_mutex_trylock(&data->input_read_buffer[i].mutex)) { continue; }
+            if(data->input_read_buffer[i].waiting_for_stitch) {
+                // image pair has not been taken by a thread for stitching, continue search for empty slot
+                pthread_mutex_unlock(&data->input_read_buffer[i].mutex);
+                continue;
+            }
+            // read new image pair into buffer element
+            swap_bitmap4_p(data->input->frame_input1, data->input_read_buffer[i].frame_input1);
+            swap_bitmap4_p(data->input->frame_input2, data->input_read_buffer[i].frame_input2);
+            int success = read_image_pair(nframe, data);
 
+            // reset this threads input image pointers, in case this data gets cleaned up while threads are still stitching the images pointed to by them.
+            swap_bitmap4_p(data->input->frame_input1, data->input_read_buffer[i].frame_input1);
+            swap_bitmap4_p(data->input->frame_input2, data->input_read_buffer[i].frame_input2);
+
+            if(!success) { // assume stdin is empty, or some error occurred
+                pthread_mutex_unlock(&data->input_read_buffer[i].mutex);
+                mark_input_as_exhausted(data);
+                return NULL;
+            }
+            data->input_read_buffer[i].waiting_for_stitch = TRUE;
+            pthread_mutex_unlock(&data->input_read_buffer[i].mutex);
+            break; // start again from the beginning
+        }
+    }
+    mark_input_as_exhausted(data);
     return NULL;
 }
 
@@ -204,32 +284,40 @@ int main(int argc, char** argv) {
     init(argc, argv);
 
 
-    if(params.debug) fprintf(stderr, "%s() - Starting threads\n", argv[0]);
+    if(params.debug) fprintf(stderr, "%s() - Initializing threads\n", argv[0]);
 
     params.threads = MIN(params.threads, params.n_stop);
 
-    buffer_elem input_read_buffer[params.input_buffer_length];
+    buffer_elem input_read_buffer_array[params.input_buffer_length];
 
-    pthread_t thread[params.threads];
-    THREAD_DATA data[params.threads];
+    // initialize read-input-buffer
+    for(size_t i = 0; i < params.input_buffer_length; ++i) {
+        pthread_mutex_init(&input_read_buffer_array[i].mutex, NULL);
+        input_read_buffer_array[i].waiting_for_stitch = FALSE;
+        input_read_buffer_array[i].frame_input1 = Create_Bitmap(params.framewidth, params.frameheight);
+        input_read_buffer_array[i].frame_input2 = Create_Bitmap(params.framewidth, params.frameheight);
+    }
+
+    pthread_t thread_array[params.threads];
+    THREAD_DATA thread_data_array[params.threads];
 
     pthread_mutex_t mutex_counter = PTHREAD_MUTEX_INITIALIZER;
-    size_t shared_counter = params.n_start;
+    boolean input_exhausted = FALSE;
 
-    // Initialize the thread data
+    // Initialize the thread thread_data_array
     for(size_t thread_id = 0; thread_id < params.threads - 1; thread_id++) {
-        data[thread_id].worker_id = thread_id;
-        data[thread_id].counter_mutex = &mutex_counter;
-        data[thread_id].ip_shared_counter = &shared_counter;
-        data[thread_id].progName = argv[0];
-        data[thread_id].last_argument = argv[argc - 1];
-        data[thread_id].input = NULL;
-        data[thread_id].input_read_buffer = &input_read_buffer;
-        data[thread_id].frame_spherical = NULL;
+        thread_data_array[thread_id].worker_id = thread_id;
+        thread_data_array[thread_id].input_exhausted_mutex = &mutex_counter;
+        thread_data_array[thread_id].input_exhausted = &input_exhausted;
+        thread_data_array[thread_id].progName = argv[0];
+        thread_data_array[thread_id].last_argument = argv[argc - 1];
+        thread_data_array[thread_id].input = NULL;
+        thread_data_array[thread_id].input_read_buffer = input_read_buffer_array;
+        thread_data_array[thread_id].frame_spherical = NULL;
     }
 
     pthread_t image_reader_thread;
-    int creating_thread_status = pthread_create(&(image_reader_thread), NULL, image_reader_worker_function, (void*)&data[0]);
+    int creating_thread_status = pthread_create(&(image_reader_thread), NULL, image_reader_worker_function, (void*)&thread_data_array[0]);
     if(creating_thread_status) {
         if(params.debug) { fprintf(stderr, "Error creating image reading thread 00, exiting.\n"); }
         exit(-1);
@@ -237,16 +325,21 @@ int main(int argc, char** argv) {
         if(params.debug) { fprintf(stderr, "%s() - Started image reading thread 00\n", argv[0]); }
     }
 
+    if(params.debug) fprintf(stderr, "%s() - Starting threads\n", argv[0]);
 
     // thread_id = 1, since id=0 thread_id is reserved for the image_reading_thread
     for(size_t thread_id = 1; thread_id < params.threads; thread_id++) {
         // Malloc images (once, then reuse in the same thread)
-        data[thread_id].input = malloc(sizeof(buffer_elem));
-        data[thread_id].input->frame_input1 = Create_Bitmap(params.framewidth, params.frameheight);
-        data[thread_id].input->frame_input2 = Create_Bitmap(params.framewidth, params.frameheight);
-        data[thread_id].frame_spherical = Create_Bitmap(params.outwidth, params.outheight);
+        thread_data_array[thread_id].input = malloc(sizeof(buffer_elem));
+        if(thread_data_array[thread_id].input == NULL) {
+            fprintf(stderr, "%s() - Failed to malloc memory for the input buffer_elem\n", argv[0]);
+            exit(-1);
+        }
+        thread_data_array[thread_id].input->frame_input1 = Create_Bitmap(params.framewidth, params.frameheight);
+        thread_data_array[thread_id].input->frame_input2 = Create_Bitmap(params.framewidth, params.frameheight);
+        thread_data_array[thread_id].frame_spherical = Create_Bitmap(params.outwidth, params.outheight);
 
-        int creating_thread_status = pthread_create(&(thread[thread_id]), NULL, image_processing_worker_function, (void*)&data[thread_id]);
+        int creating_thread_status = pthread_create(&(thread_array[thread_id]), NULL, image_processing_worker_function, (void*)&thread_data_array[thread_id]);
         if(creating_thread_status) {
             if(params.debug) { fprintf(stderr, "Error creating thread %02li, exiting.\n", thread_id); }
             exit(-1);
@@ -261,15 +354,23 @@ int main(int argc, char** argv) {
     }
 
     for(size_t thread_id = 0; thread_id < params.threads; ++thread_id) {
-        pthread_join(thread[thread_id], NULL);
+        pthread_join(thread_array[thread_id], NULL);
 
-        Destroy_Bitmap(data[thread_id].input->frame_input1);
-        Destroy_Bitmap(data[thread_id].input->frame_input2);
-        free(data[thread_id].input);
+        if(thread_data_array[thread_id].input != NULL) {
+            Destroy_Bitmap(thread_data_array[thread_id].input->frame_input1);
+            Destroy_Bitmap(thread_data_array[thread_id].input->frame_input2);
+        }
+        free(thread_data_array[thread_id].input);
 
-        Destroy_Bitmap(data[thread_id].frame_spherical);
+        Destroy_Bitmap(thread_data_array[thread_id].frame_spherical);
 
         if(params.debug) { fprintf(stderr, "Thread: %02li done\n", thread_id); }
+    }
+
+    // free all read-input-buffer images
+    for(size_t i = 0; i < params.input_buffer_length; ++i) {
+        Destroy_Bitmap(input_read_buffer_array[i].frame_input1);
+        Destroy_Bitmap(input_read_buffer_array[i].frame_input2);
     }
 
     free(g_lltable);
@@ -329,23 +430,7 @@ void calc_spherical(BITMAP4* frame_input1, BITMAP4* frame_input2, BITMAP4* spher
 
 
 // Read both frames
-void read_image_pair(const int nframe, THREAD_DATA* data) {
-    char fname1[256], fname2[256];
-    set_frame_filename_from_template(fname1, fname2, nframe, data->last_argument);
-
-    if(!ReadFrame(data->input->frame_input1, fname1, params.framewidth, params.frameheight)) {
-        if(params.debug) fprintf(stderr, "%s() T%02li - failed to read frame \"%s\"\n", data->progName, data->worker_id, fname2);
-        return;
-    }
-
-    if(!ReadFrame(data->input->frame_input2, fname2, params.framewidth, params.frameheight)) {
-        if(params.debug) fprintf(stderr, "%s() T%02li - failed to read frame \"%s\"\n", data->progName, data->worker_id, fname2);
-        return;
-    }
-}
-
-
-void process_single_image(THREAD_DATA* data, int nframe) {
+int read_image_pair(const int nframe, THREAD_DATA* data) {
     char fname1[256], fname2[256];
     set_frame_filename_from_template(fname1, fname2, nframe, data->last_argument);
 
@@ -357,35 +442,49 @@ void process_single_image(THREAD_DATA* data, int nframe) {
 
         if(access(fname_out, F_OK) == 0) {
             if(params.debug) { fprintf(stderr, "%s() T%02li - skipping frame, already exists \"%s\"\n", data->progName, data->worker_id, fname_out); }
-            return;
+            return 10;
         } else if(params.debug) {
             fprintf(stderr, "%s() T%02li - NOT skipping frame \"%s\"\n", data->progName, data->worker_id, fname_out);
         }
     }
 
-    if(data->input->frame_input1 == NULL || data->input->frame_input2 == NULL || data->frame_spherical == NULL) {
-        fprintf(stderr, "%s() T%02li - Failed to malloc memory for the images\n", data->progName, data->worker_id);
-        exit(-1);
+    if(!ReadFrame(data->input->frame_input1, fname1, &params.framewidth, &params.frameheight)) {
+        if(params.debug) fprintf(stderr, "%s() T%02li - failed to read frame \"%s\"\n", data->progName, data->worker_id, fname2);
+        return 1;
     }
+
+    if(!ReadFrame(data->input->frame_input2, fname2, &params.framewidth, &params.frameheight)) {
+        if(params.debug) fprintf(stderr, "%s() T%02li - failed to read frame \"%s\"\n", data->progName, data->worker_id, fname2);
+        return 2;
+    }
+
+    return 0;
+}
+
+
+void process_single_image(THREAD_DATA* data) {
+    size_t nframe = take_image_pair_from_buffer(data);
+    if(params.debug) { fprintf(stderr, "%s() T%02li - starting job %li\n", data->progName, data->worker_id, nframe); }
 
     // Form the spherical map
     if(params.debug) {
-        fprintf(stderr, "%s() T%02li - Creating spherical map for frame %d\n", data->progName, data->worker_id, nframe);
+        fprintf(stderr, "%s() T%02li - Creating spherical map for frame %li\n", data->progName, data->worker_id, nframe);
 
         BITMAP4 black = { 0, 0, 0, 255 };
         Erase_Bitmap(data->frame_spherical, params.outwidth, params.outheight, black);
     }
-
-    read_image_pair(nframe, data);
 
     double starttime = GetRunTime();
     calc_spherical(data->input->frame_input1, data->input->frame_input2, data->frame_spherical);
     if(params.debug) { fprintf(stderr, "%s() T%02li - Processing time: %g seconds\n", data->progName, data->worker_id, GetRunTime() - starttime); }
 
     // Write out the equirectangular
+    char fname1[256], fname2[256];
+    set_frame_filename_from_template(fname1, fname2, nframe, data->last_argument);
     // Base the name on the name of the first frame
     if(params.debug) fprintf(stderr, "%s() T%02li - Saving equirectangular\n", data->progName, data->worker_id);
     WriteSpherical(fname1, nframe, data->frame_spherical, params.outwidth, params.outheight);
+    if(params.debug) { fprintf(stderr, "%s() T%02li - finished job %li\n", data->progName, data->worker_id, nframe); }
 }
 
 
@@ -507,7 +606,7 @@ int WriteSpherical(const char* basename, int nframe, const BITMAP4* img, int w, 
 /*
    Read a frame
 */
-int ReadFrame(BITMAP4* img, char* fname, int w, int h) {
+int ReadFrame(BITMAP4* img, char* fname, size_t* w_out, size_t* h_out) {
     FILE* fptr;
 
     if(params.debug) fprintf(stderr, "ReadFrame() - Reading image \"%s\"\n", fname);
@@ -519,7 +618,7 @@ int ReadFrame(BITMAP4* img, char* fname, int w, int h) {
     }
 
     // Read image data
-    if((IsJPEG(fname) && JPEG_Read(fptr, img, &w, &h) != 0) || (IsPNG(fname) && PNG_Read(fptr, img, &w, &h) != 0)) {
+    if((IsJPEG(fname) && JPEG_Read(fptr, img, w_out, h_out) != 0) || (IsPNG(fname) && PNG_Read(fptr, img, w_out, h_out) != 0)) {
         fprintf(stderr, "ReadFrame() - Failed to correctly read JPG/PNG file \"%s\"\n", fname);
         return (FALSE);
     }

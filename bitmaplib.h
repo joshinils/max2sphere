@@ -155,14 +155,14 @@ int Read_UInt(FILE*, unsigned int*, int);
 boolean IsJPEG(const char*);
 int JPEG_Write(FILE*, BITMAP4*, int, int, int);
 int JPEG_Info(FILE*, int*, int*, int*);
-int JPEG_Read(FILE*, BITMAP4*, int*, int*);
+int JPEG_Read(FILE*, BITMAP4*, size_t*, size_t*);
 #endif
 
 #ifdef ADDPNG
 boolean IsPNG(const char*);
 int PNG_Write(FILE* fptr, const BITMAP4*, int, int, int);
 int PNG_Info(FILE*, int*, int*, int*);
-int PNG_Read(FILE*, BITMAP4*, int*, int*);
+int PNG_Read(FILE*, BITMAP4*, size_t*, size_t*);
 #endif
 
 #ifdef ADDTIFF

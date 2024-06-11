@@ -6,7 +6,7 @@ LIBS = -ljpeg -lm -lpng
 
 OBJS = max2sphere.o bitmaplib.o
 
-all: max2sphere
+all: format max2sphere
 
 max2sphere: $(OBJS)
 	$(CC) $(INCLUDES) $(CFLAGS) -o max2sphere $(OBJS) $(LFLAGS) $(LIBS)
@@ -19,3 +19,6 @@ bitmaplib.o: bitmaplib.c bitmaplib.h
 
 clean:
 	rm -rf core max2sphere $(OBJS)
+
+format:
+	clang-format -i max2sphere.h max2sphere.c bitmaplib.h bitmaplib.c
