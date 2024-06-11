@@ -11,7 +11,7 @@ ConstructorInitializerIndentWidth: 4
 UseTab: Never
 
 # jnl this may be shortened, but this will effect a lot of the formatting
-ColumnLimit: 120
+ColumnLimit: 180
 
 #jnl maybe even 0
 SpacesBeforeTrailingComments: 1

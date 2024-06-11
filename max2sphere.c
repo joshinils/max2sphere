@@ -1,5 +1,6 @@
 #include "max2sphere.h"
 #include <unistd.h>
+
 /*
     Convert a sequence of pairs of frames from the GoPro MAX camera to an equirectangular
     Sept 08: First version based upon cube2sphere
@@ -25,13 +26,200 @@ int ntable = 0;
 int itable = 0;
 
 
-int main(int argc, char** argv) {
-    char tablename[256];
-    double x, y, dx, dy, x0, y0, longitude, latitude;
-    FILE* fptr;
+int read_BMP_stdin(BITMAP4* image, size_t* width, size_t* height) {
+    int ret_code = BMP_Read(stdin, image, width, height);
+    return ret_code;
+}
 
+void test_read_from_stdin() {
+    size_t width_front = 1344 * 4096;
+    size_t height_front = 1;
+
+    size_t width_back = 1344 * 4096;
+    size_t height_back = 1;
+
+    BITMAP4* img_front = Create_Bitmap(width_front, height_front);
+    BITMAP4* img_back = Create_Bitmap(width_front, height_front);
+
+
+    for(size_t img_count = 0; TRUE; ++img_count) {
+        int ret_code_front = read_BMP_stdin(img_front, &width_front, &height_front);
+        int ret_code_back = read_BMP_stdin(img_back, &width_back, &height_back);
+        if(ret_code_front || ret_code_back) {
+            fprintf(stderr, "no image read, assuming stdin finished, stopping\n");
+            break;
+        }
+    }
+
+    Destroy_Bitmap(img_front);
+    Destroy_Bitmap(img_back);
+
+    exit(42);
+}
+
+
+void load_lltable(const char* progName) {
+    // Does a table exist? If it does, load it. if not, create it and save it
+    ntable = params.outheight * params.outwidth * params.antialias * params.antialias;
+    g_lltable = malloc(ntable * sizeof(LLTABLE));
+    char tablename[256];
+    sprintf(tablename, "%d_%d_%d_%li.data", whichtemplate, params.outwidth, params.outheight, params.antialias);
+    FILE* fptr;
+    int n = 0;
+    if((fptr = fopen(tablename, "r")) != NULL) {
+        if(params.debug) fprintf(stderr, "%s() - Reading lookup table\n", progName);
+        if((n = fread(g_lltable, sizeof(LLTABLE), ntable, fptr)) != ntable) {
+            fprintf(stderr, "%s() - Failed to read lookup table \"%s\" (%d != %d)\n", progName, tablename, n, ntable);
+        }
+        fclose(fptr);
+    }
+
+    if(n != ntable) {
+        if(params.debug) fprintf(stderr, "%s() - Generating lookup table\n", progName);
+        double dx = params.antialias * params.outwidth;
+        double dy = params.antialias * params.outheight;
+        itable = 0;
+        for(int j = 0; j < params.outheight; j++) {
+            double y0 = j / (double)params.outheight;
+            for(int i = 0; i < params.outwidth; i++) {
+                double x0 = i / (double)params.outwidth;
+                for(size_t aj = 0; aj < params.antialias; aj++) {
+                    double y = y0 + aj / dy; // 0 ... 1
+                    for(size_t ai = 0; ai < params.antialias; ai++) {
+                        double x = x0 + ai / dx; // 0 ... 1
+                        double longitude = x * TWOPI - M_PI; // -pi ... pi
+                        double latitude = y * M_PI - M_PI / 2; // -pi/2 ... pi/2
+                        g_lltable[itable].face = FindFaceUV(longitude, latitude, &(g_lltable[itable].uv));
+                        itable++;
+                    }
+                }
+            }
+        }
+        if(params.debug) fprintf(stderr, "%s() - Saving lookup table\n", progName);
+        fptr = fopen(tablename, "w");
+        fwrite(g_lltable, ntable, sizeof(LLTABLE), fptr);
+        fclose(fptr);
+    }
+}
+
+
+void* image_processing_worker_function(void* input) {
+    // Cast the pointer to the correct type
+    THREAD_DATA* data = (THREAD_DATA*)input;
+
+    for(;;) {
+        pthread_mutex_lock(data->input_exhausted_mutex);
+        const boolean input_exhausted = *(data->input_exhausted);
+        pthread_mutex_unlock(data->input_exhausted_mutex);
+        if(input_exhausted) { break; }
+
+        // TODO nframe >? params.n_stop
+
+        process_single_image(data);
+    }
+    if(params.debug) { fprintf(stderr, "%s() T%02li - finished all jobs\n", data->progName, data->worker_id); }
+    return NULL;
+}
+
+
+void swap_bitmap4_p(BITMAP4* a, BITMAP4* b) {
+    BITMAP4* swap = a;
+    a = b;
+    b = swap;
+}
+
+
+int take_image_pair_from_buffer(THREAD_DATA* data) {
+    // TODO lock whole buffer for taking
+
+    // take the smallest nframe value, since that will be needed for output the earliest,
+    // since the order in which they are stored in the buffer is not guaranteed
+    size_t smallest_nframe_index = -1; // max val
+    size_t smallest_nframe = -1;
+
+    // search for smallest valid buffer element
+    while(smallest_nframe_index > params.input_buffer_length) {
+        for(size_t i = 0; i < params.input_buffer_length; ++i) {
+            pthread_mutex_lock(&data->input_read_buffer[i].mutex);
+            if(!data->input_read_buffer[i].waiting_for_stitch) {
+                // if the buffer element has no valid image pair, skip it
+                pthread_mutex_unlock(&data->input_read_buffer[i].mutex);
+                continue;
+            }
+
+            if(data->input_read_buffer[i].nframe < smallest_nframe) {
+                smallest_nframe = data->input_read_buffer[i].nframe;
+                smallest_nframe_index = i;
+            }
+            pthread_mutex_unlock(&data->input_read_buffer[i].mutex);
+        }
+    }
+    swap_bitmap4_p(data->input->frame_input1, data->input_read_buffer[smallest_nframe_index].frame_input1);
+    swap_bitmap4_p(data->input->frame_input2, data->input_read_buffer[smallest_nframe_index].frame_input2);
+    data->input_read_buffer[smallest_nframe_index].waiting_for_stitch = FALSE;
+    // TODO unlock whole buffer from taking
+    return smallest_nframe;
+}
+
+
+void mark_input_as_exhausted(THREAD_DATA* data) {
+    // TODO: don't keep looping and polling the buffer, instead use pthread_cond_t for each element and wait for each once
+    for(;;) {
+        boolean all_done = TRUE;
+        for(size_t i = 0; i < params.input_buffer_length; ++i) {
+            pthread_mutex_lock(&data->input_read_buffer[i].mutex);
+            all_done = all_done && data->input_read_buffer[i].waiting_for_stitch;
+            pthread_mutex_unlock(&data->input_read_buffer[i].mutex);
+            if(!all_done) { break; }
+        }
+        if(all_done) { break; }
+    }
+    pthread_mutex_lock(data->input_exhausted_mutex);
+    *(data->input_exhausted) = TRUE;
+    pthread_mutex_unlock(data->input_exhausted_mutex);
+}
+
+
+void* image_reader_worker_function(void* input) {
+    // Cast the pointer to the correct type
+    THREAD_DATA* data = (THREAD_DATA*)input;
+
+    // while true with a counter:
+    for(size_t nframe = 0; TRUE; ++nframe) {
+        for(size_t i = 0; i < params.input_buffer_length; ++i) {
+            if(!pthread_mutex_trylock(&data->input_read_buffer[i].mutex)) { continue; }
+            if(data->input_read_buffer[i].waiting_for_stitch) {
+                // image pair has not been taken by a thread for stitching, continue search for empty slot
+                pthread_mutex_unlock(&data->input_read_buffer[i].mutex);
+                continue;
+            }
+            // read new image pair into buffer element
+            swap_bitmap4_p(data->input->frame_input1, data->input_read_buffer[i].frame_input1);
+            swap_bitmap4_p(data->input->frame_input2, data->input_read_buffer[i].frame_input2);
+            int success = read_image_pair(nframe, data);
+
+            // reset this threads input image pointers, in case this data gets cleaned up while threads are still stitching the images pointed to by them.
+            swap_bitmap4_p(data->input->frame_input1, data->input_read_buffer[i].frame_input1);
+            swap_bitmap4_p(data->input->frame_input2, data->input_read_buffer[i].frame_input2);
+
+            if(!success) { // assume stdin is empty, or some error occurred
+                pthread_mutex_unlock(&data->input_read_buffer[i].mutex);
+                mark_input_as_exhausted(data);
+                return NULL;
+            }
+            data->input_read_buffer[i].waiting_for_stitch = TRUE;
+            pthread_mutex_unlock(&data->input_read_buffer[i].mutex);
+            break; // start again from the beginning
+        }
+    }
+    mark_input_as_exhausted(data);
+    return NULL;
+}
+
+
+void init(int argc, char** argv) {
     // Default settings
-    Init();
+    init_default_params();
 
     // Check and parse command line
     if(argc < 2) {
@@ -57,8 +245,10 @@ int main(int argc, char** argv) {
             params.debug = TRUE;
         } else if(strcmp(argv[i], "-F") == 0) {
             params.skip_existing = FALSE;
+        } else if(strcmp(argv[i], "-b") == 0) {
+            params.input_buffer_length = MAX(1, atoi(argv[i + 1]));
         } else if(strcmp(argv[i], "-t") == 0) {
-            params.threads = MAX(1, atoi(argv[i + 1]));
+            params.threads = MAX(1, atoi(argv[i + 1])) + 1; // +1 for the image reading thread
         }
     }
 
@@ -70,15 +260,9 @@ int main(int argc, char** argv) {
             params.outfilename[0] = '\0';
     }
 
-
-    char fname1[256], fname2[256];
-
-
     // Check the first frame to determine template and frame sizes
+    char fname1[256], fname2[256];
     set_frame_filename_from_template(fname1, fname2, params.n_start, argv[argc - 1]);
-    // sprintf(fname1, argv[argc - 1], 0, params.n_start);
-    // sprintf(fname2, argv[argc - 1], 5, params.n_start);
-    // if(params.debug) fprintf(stderr, "fname1=%s fname2=%s\n", fname1, fname2);
     if((whichtemplate = CheckFrames(fname1, fname2, &params.framewidth, &params.frameheight)) < 0) exit(-1);
     if(params.debug) {
         fprintf(stderr, "%s() - frame dimensions: %li × %li\n", argv[0], params.framewidth, params.frameheight);
@@ -90,92 +274,103 @@ int main(int argc, char** argv) {
         params.outheight = params.outwidth / 2;
     }
 
-    // Does a table exist? If it does, load it. if not, create it and save it
-    ntable = params.outheight * params.outwidth * params.antialias * params.antialias;
-    g_lltable = malloc(ntable * sizeof(LLTABLE));
-    sprintf(tablename, "%d_%d_%d_%li.data", whichtemplate, params.outwidth, params.outheight, params.antialias);
-    int n = 0;
-    if((fptr = fopen(tablename, "r")) != NULL) {
-        if(params.debug) fprintf(stderr, "%s() - Reading lookup table\n", argv[0]);
-        if((n = fread(g_lltable, sizeof(LLTABLE), ntable, fptr)) != ntable) {
-            fprintf(stderr, "%s() - Failed to read lookup table \"%s\" (%d != %d)\n", argv[0], tablename, n, ntable);
-        }
-        fclose(fptr);
-    }
-    if(n != ntable) {
-        if(params.debug) fprintf(stderr, "%s() - Generating lookup table\n", argv[0]);
-        dx = params.antialias * params.outwidth;
-        dy = params.antialias * params.outheight;
-        itable = 0;
-        for(int j = 0; j < params.outheight; j++) {
-            y0 = j / (double)params.outheight;
-            for(int i = 0; i < params.outwidth; i++) {
-                x0 = i / (double)params.outwidth;
-                for(size_t aj = 0; aj < params.antialias; aj++) {
-                    y = y0 + aj / dy; // 0 ... 1
-                    for(size_t ai = 0; ai < params.antialias; ai++) {
-                        x = x0 + ai / dx; // 0 ... 1
-                        longitude = x * TWOPI - M_PI; // -pi ... pi
-                        latitude = y * M_PI - M_PI / 2; // -pi/2 ... pi/2
-                        g_lltable[itable].face = FindFaceUV(longitude, latitude, &(g_lltable[itable].uv));
-                        itable++;
-                    }
-                }
-            }
-        }
-        if(params.debug) fprintf(stderr, "%s() - Saving lookup table\n", argv[0]);
-        fptr = fopen(tablename, "w");
-        fwrite(g_lltable, ntable, sizeof(LLTABLE), fptr);
-        fclose(fptr);
-    }
+    load_lltable(argv[0]);
+}
 
 
-    if(params.debug) fprintf(stderr, "%s() - Starting threads\n", argv[0]);
+int main(int argc, char** argv) {
+    test_read_from_stdin();
+
+    init(argc, argv);
+
+
+    if(params.debug) fprintf(stderr, "%s() - Initializing threads\n", argv[0]);
 
     params.threads = MIN(params.threads, params.n_stop);
 
-    pthread_t thread[params.threads];
-    THREAD_DATA data[params.threads];
+    buffer_elem input_read_buffer_array[params.input_buffer_length];
+
+    // initialize read-input-buffer
+    for(size_t i = 0; i < params.input_buffer_length; ++i) {
+        pthread_mutex_init(&input_read_buffer_array[i].mutex, NULL);
+        input_read_buffer_array[i].waiting_for_stitch = FALSE;
+        input_read_buffer_array[i].frame_input1 = Create_Bitmap(params.framewidth, params.frameheight);
+        input_read_buffer_array[i].frame_input2 = Create_Bitmap(params.framewidth, params.frameheight);
+    }
+
+    pthread_t thread_array[params.threads];
+    THREAD_DATA thread_data_array[params.threads];
 
     pthread_mutex_t mutex_counter = PTHREAD_MUTEX_INITIALIZER;
-    size_t shared_counter = params.n_start;
+    boolean input_exhausted = FALSE;
 
-    for(size_t thread_id = 0; thread_id < params.threads; thread_id++) {
-        // Initialize the thread data
-        data[thread_id].worker_id = thread_id;
-        data[thread_id].counter_mutex = &mutex_counter;
-        data[thread_id].ip_shared_counter = &shared_counter;
-        data[thread_id].progName = argv[0];
-        data[thread_id].last_argument = argv[argc - 1];
+    // Initialize the thread thread_data_array
+    for(size_t thread_id = 0; thread_id < params.threads - 1; thread_id++) {
+        thread_data_array[thread_id].worker_id = thread_id;
+        thread_data_array[thread_id].input_exhausted_mutex = &mutex_counter;
+        thread_data_array[thread_id].input_exhausted = &input_exhausted;
+        thread_data_array[thread_id].progName = argv[0];
+        thread_data_array[thread_id].last_argument = argv[argc - 1];
+        thread_data_array[thread_id].input = NULL;
+        thread_data_array[thread_id].input_read_buffer = input_read_buffer_array;
+        thread_data_array[thread_id].frame_spherical = NULL;
+    }
 
+    pthread_t image_reader_thread;
+    int creating_thread_status = pthread_create(&(image_reader_thread), NULL, image_reader_worker_function, (void*)&thread_data_array[0]);
+    if(creating_thread_status) {
+        if(params.debug) { fprintf(stderr, "Error creating image reading thread 00, exiting.\n"); }
+        exit(-1);
+    } else if(params.debug) {
+        if(params.debug) { fprintf(stderr, "%s() - Started image reading thread 00\n", argv[0]); }
+    }
+
+    if(params.debug) fprintf(stderr, "%s() - Starting threads\n", argv[0]);
+
+    // thread_id = 1, since id=0 thread_id is reserved for the image_reading_thread
+    for(size_t thread_id = 1; thread_id < params.threads; thread_id++) {
         // Malloc images (once, then reuse in the same thread)
-        data[thread_id].frame_input1 = Create_Bitmap(params.framewidth, params.frameheight);
-        data[thread_id].frame_input2 = Create_Bitmap(params.framewidth, params.frameheight);
-        data[thread_id].frame_spherical = Create_Bitmap(params.outwidth, params.outheight);
+        thread_data_array[thread_id].input = malloc(sizeof(buffer_elem));
+        if(thread_data_array[thread_id].input == NULL) {
+            fprintf(stderr, "%s() - Failed to malloc memory for the input buffer_elem\n", argv[0]);
+            exit(-1);
+        }
+        thread_data_array[thread_id].input->frame_input1 = Create_Bitmap(params.framewidth, params.frameheight);
+        thread_data_array[thread_id].input->frame_input2 = Create_Bitmap(params.framewidth, params.frameheight);
+        thread_data_array[thread_id].frame_spherical = Create_Bitmap(params.outwidth, params.outheight);
 
-        int creating_thread_status =
-        pthread_create(&(thread[thread_id]), NULL, worker_function, (void*)&data[thread_id]);
+        int creating_thread_status = pthread_create(&(thread_array[thread_id]), NULL, image_processing_worker_function, (void*)&thread_data_array[thread_id]);
         if(creating_thread_status) {
             if(params.debug) { fprintf(stderr, "Error creating thread %02li, exiting.\n", thread_id); }
             exit(-1);
         } else if(params.debug) {
-            if(params.debug) { fprintf(stderr, "%s() - Started Thread %02li\n", argv[0], thread_id); }
+            if(params.debug) { fprintf(stderr, "%s() - Started t %02li\n", argv[0], thread_id); }
         }
 
         if(params.threads > 1) {
             // spread start of threads out a bit so compute and io time do not overlap at the start
-            usleep(1000.0 / (params.threads + 1));
+            usleep(1000.0 / (params.threads));
         }
     }
 
     for(size_t thread_id = 0; thread_id < params.threads; ++thread_id) {
-        pthread_join(thread[thread_id], NULL);
+        pthread_join(thread_array[thread_id], NULL);
 
-        Destroy_Bitmap(data[thread_id].frame_input1);
-        Destroy_Bitmap(data[thread_id].frame_input2);
-        Destroy_Bitmap(data[thread_id].frame_spherical);
+        if(thread_data_array[thread_id].input != NULL) {
+            Destroy_Bitmap(thread_data_array[thread_id].input->frame_input1);
+            Destroy_Bitmap(thread_data_array[thread_id].input->frame_input2);
+        }
+        free(thread_data_array[thread_id].input);
+
+        Destroy_Bitmap(thread_data_array[thread_id].frame_spherical);
 
         if(params.debug) { fprintf(stderr, "Thread: %02li done\n", thread_id); }
+    }
+
+    // free all read-input-buffer images
+    for(size_t i = 0; i < params.input_buffer_length; ++i) {
+        Destroy_Bitmap(input_read_buffer_array[i].frame_input1);
+        Destroy_Bitmap(input_read_buffer_array[i].frame_input2);
     }
 
     free(g_lltable);
@@ -189,86 +384,15 @@ void set_frame_filename_from_template(char* fname1, char* fname2, int nframe, co
 }
 
 
-void* worker_function(void* input) {
-    // Cast the pointer to the correct type
-    THREAD_DATA* data = (THREAD_DATA*)input;
-
-    for(;;) {
-        pthread_mutex_lock(data->counter_mutex);
-        size_t nframe = *(data->ip_shared_counter);
-        (*(data->ip_shared_counter))++;
-        pthread_mutex_unlock(data->counter_mutex);
-
-        if(nframe > params.n_stop) { break; }
-
-        if(params.debug) {
-            fprintf(stderr, "%s() T%02li - starting job %li\n", data->progName, data->worker_id, nframe);
-        }
-        process_single_image(data, nframe);
-        if(params.debug) {
-            fprintf(stderr, "%s() T%02li - finished job %li\n", data->progName, data->worker_id, nframe);
-        }
-    }
-    if(params.debug) { fprintf(stderr, "%s() T%02li - finished all jobs\n", data->progName, data->worker_id); }
-    return NULL;
-}
-
-
-void process_single_image(THREAD_DATA* data, int nframe) {
-    char fname1[256], fname2[256];
-    set_frame_filename_from_template(fname1, fname2, nframe, data->last_argument);
-
-    if(params.skip_existing) {
-        // Create the output file name
-        char fname_out[256];
-        create_output_filename(fname_out, fname1, nframe);
-
-        if(access(fname_out, F_OK) == 0) {
-            if(params.debug) {
-                fprintf(stderr,
-                        "%s() T%02li - skipping frame, already exists \"%s\"\n",
-                        data->progName,
-                        data->worker_id,
-                        fname_out);
-            }
-            return;
-        } else if(params.debug) {
-            fprintf(stderr, "%s() T%02li - NOT skipping frame \"%s\"\n", data->progName, data->worker_id, fname_out);
-        }
-    }
-
-    if(data->frame_input1 == NULL || data->frame_input2 == NULL || data->frame_spherical == NULL) {
-        fprintf(stderr, "%s() T%02li - Failed to malloc memory for the images\n", data->progName, data->worker_id);
-        exit(-1);
-    }
-
-    // Form the spherical map
-    if(params.debug)
-        fprintf(stderr, "%s() T%02li - Creating spherical map for frame %d\n", data->progName, data->worker_id, nframe);
-    BITMAP4 black = { 0, 0, 0, 255 };
-    Erase_Bitmap(data->frame_spherical, params.outwidth, params.outheight, black);
-
-    // Read both frames
-    if(!ReadFrame(data->frame_input1, fname1, params.framewidth, params.frameheight)) {
-        if(params.debug)
-            fprintf(stderr, "%s() T%02li - failed to read frame \"%s\"\n", data->progName, data->worker_id, fname2);
-        return;
-    }
-
-    if(!ReadFrame(data->frame_input2, fname2, params.framewidth, params.frameheight)) {
-        if(params.debug)
-            fprintf(stderr, "%s() T%02li - failed to read frame \"%s\"\n", data->progName, data->worker_id, fname2);
-        return;
-    }
-
-    double starttime = GetRunTime();
+// calculates spherical image from two input images
+void calc_spherical(BITMAP4* frame_input1, BITMAP4* frame_input2, BITMAP4* spherical_out) {
     int itable = 0;
-    for(int j = 0; j < params.outheight; j++) {
+    for(int j = 0; j < params.outheight; ++j) {
         //y0 = j / (double)params.outheight;
         //if (params.debug && j % (params.outheight/32) == 0)
         //fprintf(stderr,"%s() - Scan line %d\n",progName,j);
 
-        for(int i = 0; i < params.outwidth; i++) {
+        for(int i = 0; i < params.outwidth; ++i) {
             //x0 = i / (double)params.outwidth;
             COLOUR16 csum = { 0, 0, 0 }; // Supersampling antialising sum
 
@@ -288,7 +412,7 @@ void process_single_image(THREAD_DATA* data, int nframe) {
                     itable++;
 
                     // Sum over the supersampling set
-                    BITMAP4 c = GetColour(face, uv, data->frame_input1, data->frame_input2);
+                    BITMAP4 c = GetColour(face, uv, frame_input1, frame_input2);
                     csum.r += c.r;
                     csum.g += c.g;
                     csum.b += c.b;
@@ -297,24 +421,70 @@ void process_single_image(THREAD_DATA* data, int nframe) {
 
             // Finally update the spherical image
             int index = j * params.outwidth + i;
-            data->frame_spherical[index].r = csum.r / params.antialias2;
-            data->frame_spherical[index].g = csum.g / params.antialias2;
-            data->frame_spherical[index].b = csum.b / params.antialias2;
+            spherical_out[index].r = csum.r / params.antialias2;
+            spherical_out[index].g = csum.g / params.antialias2;
+            spherical_out[index].b = csum.b / params.antialias2;
+        }
+    }
+}
+
+
+// Read both frames
+int read_image_pair(const int nframe, THREAD_DATA* data) {
+    char fname1[256], fname2[256];
+    set_frame_filename_from_template(fname1, fname2, nframe, data->last_argument);
+
+    // skip calculation of frame if output file exists
+    if(params.skip_existing) {
+        // Create the output file name
+        char fname_out[256];
+        create_output_filename(fname_out, fname1, nframe);
+
+        if(access(fname_out, F_OK) == 0) {
+            if(params.debug) { fprintf(stderr, "%s() T%02li - skipping frame, already exists \"%s\"\n", data->progName, data->worker_id, fname_out); }
+            return 10;
+        } else if(params.debug) {
+            fprintf(stderr, "%s() T%02li - NOT skipping frame \"%s\"\n", data->progName, data->worker_id, fname_out);
         }
     }
 
-    if(params.debug) {
-        fprintf(stderr,
-                "%s() T%02li - Processing time: %g seconds\n",
-                data->progName,
-                data->worker_id,
-                GetRunTime() - starttime);
+    if(!ReadFrame(data->input->frame_input1, fname1, &params.framewidth, &params.frameheight)) {
+        if(params.debug) fprintf(stderr, "%s() T%02li - failed to read frame \"%s\"\n", data->progName, data->worker_id, fname2);
+        return 1;
     }
 
+    if(!ReadFrame(data->input->frame_input2, fname2, &params.framewidth, &params.frameheight)) {
+        if(params.debug) fprintf(stderr, "%s() T%02li - failed to read frame \"%s\"\n", data->progName, data->worker_id, fname2);
+        return 2;
+    }
+
+    return 0;
+}
+
+
+void process_single_image(THREAD_DATA* data) {
+    size_t nframe = take_image_pair_from_buffer(data);
+    if(params.debug) { fprintf(stderr, "%s() T%02li - starting job %li\n", data->progName, data->worker_id, nframe); }
+
+    // Form the spherical map
+    if(params.debug) {
+        fprintf(stderr, "%s() T%02li - Creating spherical map for frame %li\n", data->progName, data->worker_id, nframe);
+
+        BITMAP4 black = { 0, 0, 0, 255 };
+        Erase_Bitmap(data->frame_spherical, params.outwidth, params.outheight, black);
+    }
+
+    double starttime = GetRunTime();
+    calc_spherical(data->input->frame_input1, data->input->frame_input2, data->frame_spherical);
+    if(params.debug) { fprintf(stderr, "%s() T%02li - Processing time: %g seconds\n", data->progName, data->worker_id, GetRunTime() - starttime); }
+
     // Write out the equirectangular
+    char fname1[256], fname2[256];
+    set_frame_filename_from_template(fname1, fname2, nframe, data->last_argument);
     // Base the name on the name of the first frame
     if(params.debug) fprintf(stderr, "%s() T%02li - Saving equirectangular\n", data->progName, data->worker_id);
     WriteSpherical(fname1, nframe, data->frame_spherical, params.outwidth, params.outheight);
+    if(params.debug) { fprintf(stderr, "%s() T%02li - finished job %li\n", data->progName, data->worker_id, nframe); }
 }
 
 
@@ -392,18 +562,18 @@ int CheckFrames(const char* fname1, const char* fname2, size_t* width, size_t* h
 }
 
 // params.skip_existing
-void create_output_filename(char* fname, const char* basename, int nframe) {
+void create_output_filename(char* fname_out, const char* basename, int nframe) {
     if(strlen(params.outfilename) < 2) {
-        sprintf(fname, basename, 0, nframe);
-        for(int i = strlen(fname) - 1; i > 0; i--) {
-            if(fname[i] == '.') {
-                fname[i] = '\0';
+        sprintf(fname_out, basename, 0, nframe);
+        for(int i = strlen(fname_out) - 1; i > 0; i--) {
+            if(fname_out[i] == '.') {
+                fname_out[i] = '\0';
                 break;
             }
         }
-        strcat(fname, "_sphere.png");
+        strcat(fname_out, "_sphere.png");
     } else {
-        sprintf(fname, params.outfilename, nframe);
+        sprintf(fname_out, params.outfilename, nframe);
     }
 }
 
@@ -415,21 +585,19 @@ void create_output_filename(char* fname, const char* basename, int nframe) {
 */
 int WriteSpherical(const char* basename, int nframe, const BITMAP4* img, int w, int h) {
     // Create the output file name
-    char fname[256];
-    create_output_filename(fname, basename, nframe);
+    char fname_out[256];
+    create_output_filename(fname_out, basename, nframe);
 
-    if(params.debug) fprintf(stderr, "WriteSpherical() - Saving file \"%s\"\n", fname);
+    if(params.debug) fprintf(stderr, "WriteSpherical() - Saving file \"%s\"\n", fname_out);
 
     // Save
     FILE* fptr;
-    if((fptr = fopen(fname, "wb")) == NULL) {
-        fprintf(stderr, "WriteSpherical() - Failed to open output file \"%s\"\n", fname);
+    if((fptr = fopen(fname_out, "wb")) == NULL) {
+        fprintf(stderr, "WriteSpherical() - Failed to open output file \"%s\"\n", fname_out);
         return (FALSE);
     }
 
-    if(PNG_Write(fptr, img, w, h, FALSE)) {
-        fprintf(stderr, "WriteSpherical() - Failed to write output file \"%s\"\n", fname);
-    }
+    if(PNG_Write(fptr, img, w, h, FALSE)) { fprintf(stderr, "WriteSpherical() - Failed to write output file \"%s\"\n", fname_out); }
     fclose(fptr);
 
     return (TRUE);
@@ -438,7 +606,7 @@ int WriteSpherical(const char* basename, int nframe, const BITMAP4* img, int w, 
 /*
    Read a frame
 */
-int ReadFrame(BITMAP4* img, char* fname, int w, int h) {
+int ReadFrame(BITMAP4* img, char* fname, size_t* w_out, size_t* h_out) {
     FILE* fptr;
 
     if(params.debug) fprintf(stderr, "ReadFrame() - Reading image \"%s\"\n", fname);
@@ -450,7 +618,7 @@ int ReadFrame(BITMAP4* img, char* fname, int w, int h) {
     }
 
     // Read image data
-    if((IsJPEG(fname) && JPEG_Read(fptr, img, &w, &h) != 0) || (IsPNG(fname) && PNG_Read(fptr, img, &w, &h) != 0)) {
+    if((IsJPEG(fname) && JPEG_Read(fptr, img, w_out, h_out) != 0) || (IsPNG(fname) && PNG_Read(fptr, img, w_out, h_out) != 0)) {
         fprintf(stderr, "ReadFrame() - Failed to correctly read JPG/PNG file \"%s\"\n", fname);
         return (FALSE);
     }
@@ -687,7 +855,7 @@ void RotateUV90(UV* uv) {
 /*
     Initialise parameters structure
 */
-void Init(void) {
+void init_default_params(void) {
     params.outwidth = -1;
     params.outheight = -1;
     params.framewidth = -1;
@@ -698,8 +866,9 @@ void Init(void) {
     params.n_stop = 100000;
     params.outfilename[0] = '\0';
     params.debug = FALSE;
-    params.threads = MAX(1, sysconf(_SC_NPROCESSORS_ONLN));
+    params.threads = MAX(1, sysconf(_SC_NPROCESSORS_ONLN)) + 1; // +1 for the image reading thread
     params.skip_existing = TRUE;
+    params.input_buffer_length = 1;
 
     // Parameters for the 6 cube planes, ax + by + cz + d = 0
     params.faces[LEFT].a = -1;
@@ -793,4 +962,5 @@ void GiveUsage(char* s) {
     fprintf(stderr, "   -t n      Amount of threads to use,         default: %li\n", params.threads);
     fprintf(stderr, "   -d        Enable debug mode,                default: off\n");
     fprintf(stderr, "   -F        Overwrite existing output images, default: off\n");
+    fprintf(stderr, "   -b        Set input buffer length,          default: %li\n", params.input_buffer_length);
 }
