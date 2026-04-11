@@ -8,22 +8,21 @@
    Dec  14: This version which is a batch converter based upon a lookup table
 */
 
-PARAMS params;
+PARAMS GLOBAL_params;
 
 // These are known frame templates
 // The appropriate one to use will be auto detected, error is none match
 #define NTEMPLATE 2
-FRAMESPECS template[NTEMPLATE] = { { 4096, 1344, 1376, 1344, 32, 5376 }, { 2272, 736, 768, 736, 16, 2944 } };
-int whichtemplate = -1; // Which frame template do we think we have
+FRAMESPECS GLOBAL_template[NTEMPLATE] = { { 4096, 1344, 1376, 1344, 32, 5376 }, { 2272, 736, 768, 736, 16, 2944 } };
+int GLOBAL_whichtemplate = -1; // Which frame template do we think we have
 
 // Lookup table
 typedef struct {
     UV uv;
     short int face;
 } LLTABLE;
-LLTABLE* g_lltable = NULL;
-int ntable = 0;
-int itable = 0;
+LLTABLE* GLOBAL_lltable = NULL;
+int GLOBAL_ntable = 0;
 
 
 int read_BMP_stdin(BITMAP4* image, size_t* width, size_t* height) {
@@ -60,44 +59,44 @@ void test_read_from_stdin() {
 
 void load_lltable(const char* progName) {
     // Does a table exist? If it does, load it. if not, create it and save it
-    ntable = params.outheight * params.outwidth * params.antialias * params.antialias;
-    g_lltable = malloc(ntable * sizeof(LLTABLE));
+    GLOBAL_ntable = GLOBAL_params.outheight * GLOBAL_params.outwidth * GLOBAL_params.antialias * GLOBAL_params.antialias;
+    GLOBAL_lltable = malloc(GLOBAL_ntable * sizeof(LLTABLE));
     char tablename[256];
-    sprintf(tablename, "%d_%d_%d_%li.data", whichtemplate, params.outwidth, params.outheight, params.antialias);
+    sprintf(tablename, "%d_%d_%d_%li.data", GLOBAL_whichtemplate, GLOBAL_params.outwidth, GLOBAL_params.outheight, GLOBAL_params.antialias);
     FILE* fptr;
     int n = 0;
     if((fptr = fopen(tablename, "r")) != NULL) {
-        if(params.debug) fprintf(stderr, "%s() - Reading lookup table\n", progName);
-        if((n = fread(g_lltable, sizeof(LLTABLE), ntable, fptr)) != ntable) {
-            fprintf(stderr, "%s() - Failed to read lookup table \"%s\" (%d != %d)\n", progName, tablename, n, ntable);
+        if(GLOBAL_params.debug) fprintf(stderr, "%s() - Reading lookup table\n", progName);
+        if((n = fread(GLOBAL_lltable, sizeof(LLTABLE), GLOBAL_ntable, fptr)) != GLOBAL_ntable) {
+            fprintf(stderr, "%s() - Failed to read lookup table \"%s\" (%d != %d)\n", progName, tablename, n, GLOBAL_ntable);
         }
         fclose(fptr);
     }
 
-    if(n != ntable) {
-        if(params.debug) fprintf(stderr, "%s() - Generating lookup table\n", progName);
-        double dx = params.antialias * params.outwidth;
-        double dy = params.antialias * params.outheight;
-        itable = 0;
-        for(int j = 0; j < params.outheight; j++) {
-            double y0 = j / (double)params.outheight;
-            for(int i = 0; i < params.outwidth; i++) {
-                double x0 = i / (double)params.outwidth;
-                for(size_t aj = 0; aj < params.antialias; aj++) {
+    if(n != GLOBAL_ntable) {
+        if(GLOBAL_params.debug) fprintf(stderr, "%s() - Generating lookup table\n", progName);
+        double dx = GLOBAL_params.antialias * GLOBAL_params.outwidth;
+        double dy = GLOBAL_params.antialias * GLOBAL_params.outheight;
+        int itable = 0;
+        for(int j = 0; j < GLOBAL_params.outheight; j++) {
+            double y0 = j / (double)GLOBAL_params.outheight;
+            for(int i = 0; i < GLOBAL_params.outwidth; i++) {
+                double x0 = i / (double)GLOBAL_params.outwidth;
+                for(size_t aj = 0; aj < GLOBAL_params.antialias; aj++) {
                     double y = y0 + aj / dy; // 0 ... 1
-                    for(size_t ai = 0; ai < params.antialias; ai++) {
+                    for(size_t ai = 0; ai < GLOBAL_params.antialias; ai++) {
                         double x = x0 + ai / dx; // 0 ... 1
                         double longitude = x * TWOPI - M_PI; // -pi ... pi
                         double latitude = y * M_PI - M_PI / 2; // -pi/2 ... pi/2
-                        g_lltable[itable].face = FindFaceUV(longitude, latitude, &(g_lltable[itable].uv));
+                        GLOBAL_lltable[itable].face = FindFaceUV(longitude, latitude, &(GLOBAL_lltable[itable].uv));
                         itable++;
                     }
                 }
             }
         }
-        if(params.debug) fprintf(stderr, "%s() - Saving lookup table\n", progName);
+        if(GLOBAL_params.debug) fprintf(stderr, "%s() - Saving lookup table\n", progName);
         fptr = fopen(tablename, "w");
-        fwrite(g_lltable, ntable, sizeof(LLTABLE), fptr);
+        fwrite(GLOBAL_lltable, GLOBAL_ntable, sizeof(LLTABLE), fptr);
         fclose(fptr);
     }
 }
@@ -117,7 +116,7 @@ void* image_processing_worker_function(void* input) {
 
         process_single_image(data);
     }
-    if(params.debug) { fprintf(stderr, "%s() T%02li - finished all jobs\n", data->progName, data->worker_id); }
+    if(GLOBAL_params.debug) { fprintf(stderr, "%s() T%02li - finished all jobs\n", data->progName, data->worker_id); }
     return NULL;
 }
 
@@ -138,8 +137,8 @@ int take_image_pair_from_buffer(THREAD_DATA* data) {
     size_t smallest_nframe = -1;
 
     // search for smallest valid buffer element
-    while(smallest_nframe_index > params.input_buffer_length) {
-        for(size_t i = 0; i < params.input_buffer_length; ++i) {
+    while(smallest_nframe_index > GLOBAL_params.input_buffer_length) {
+        for(size_t i = 0; i < GLOBAL_params.input_buffer_length; ++i) {
             pthread_mutex_lock(&data->input_read_buffer[i].mutex);
             if(!data->input_read_buffer[i].waiting_for_stitch) {
                 // if the buffer element has no valid image pair, skip it
@@ -166,7 +165,7 @@ void mark_input_as_exhausted(THREAD_DATA* data) {
     // TODO: don't keep looping and polling the buffer, instead use pthread_cond_t for each element and wait for each once
     for(;;) {
         boolean all_done = TRUE;
-        for(size_t i = 0; i < params.input_buffer_length; ++i) {
+        for(size_t i = 0; i < GLOBAL_params.input_buffer_length; ++i) {
             pthread_mutex_lock(&data->input_read_buffer[i].mutex);
             all_done = all_done && data->input_read_buffer[i].waiting_for_stitch;
             pthread_mutex_unlock(&data->input_read_buffer[i].mutex);
@@ -186,7 +185,7 @@ void* image_reader_worker_function(void* input) {
 
     // while true with a counter:
     for(size_t nframe = 0; TRUE; ++nframe) {
-        for(size_t i = 0; i < params.input_buffer_length; ++i) {
+        for(size_t i = 0; i < GLOBAL_params.input_buffer_length; ++i) {
             if(!pthread_mutex_trylock(&data->input_read_buffer[i].mutex)) { continue; }
             if(data->input_read_buffer[i].waiting_for_stitch) {
                 // image pair has not been taken by a thread for stitching, continue search for empty slot
@@ -229,49 +228,49 @@ void init(int argc, char** argv) {
 
     for(int i = 1; i < argc - 1; i++) {
         if(strcmp(argv[i], "-w") == 0) {
-            params.outwidth = MAX(1, atoi(argv[i + 1]));
-            params.outwidth = 4 * (params.outwidth / 4); // Make factor of 4
-            params.outheight = params.outwidth / 2; // Will be even
+            GLOBAL_params.outwidth = MAX(1, atoi(argv[i + 1]));
+            GLOBAL_params.outwidth = 4 * (GLOBAL_params.outwidth / 4); // Make factor of 4
+            GLOBAL_params.outheight = GLOBAL_params.outwidth / 2; // Will be even
         } else if(strcmp(argv[i], "-a") == 0) {
-            params.antialias = MAX(1, atoi(argv[i + 1]));
-            params.antialias2 = params.antialias * params.antialias;
+            GLOBAL_params.antialias = MAX(1, atoi(argv[i + 1]));
+            GLOBAL_params.antialias2 = GLOBAL_params.antialias * GLOBAL_params.antialias;
         } else if(strcmp(argv[i], "-o") == 0) {
-            strcpy(params.outfilename, argv[i + 1]);
+            strcpy(GLOBAL_params.outfilename, argv[i + 1]);
         } else if(strcmp(argv[i], "-n") == 0) {
-            params.n_start = MAX(0, atoi(argv[i + 1]));
+            GLOBAL_params.n_start = MAX(0, atoi(argv[i + 1]));
         } else if(strcmp(argv[i], "-m") == 0) {
-            params.n_stop = MAX(0, atoi(argv[i + 1]));
+            GLOBAL_params.n_stop = MAX(0, atoi(argv[i + 1]));
         } else if(strcmp(argv[i], "-d") == 0) {
-            params.debug = TRUE;
+            GLOBAL_params.debug = TRUE;
         } else if(strcmp(argv[i], "-F") == 0) {
-            params.skip_existing = FALSE;
+            GLOBAL_params.skip_existing = FALSE;
         } else if(strcmp(argv[i], "-b") == 0) {
-            params.input_buffer_length = MAX(1, atoi(argv[i + 1]));
+            GLOBAL_params.input_buffer_length = MAX(1, atoi(argv[i + 1]));
         } else if(strcmp(argv[i], "-t") == 0) {
-            params.threads = MAX(1, atoi(argv[i + 1])) + 1; // +1 for the image reading thread
+            GLOBAL_params.threads = MAX(1, atoi(argv[i + 1])) + 1; // +1 for the image reading thread
         }
     }
 
     // Check filename templates
     if(!CheckTemplate(argv[argc - 1], 2)) // Fatal
         exit(-1);
-    if(strlen(params.outfilename) > 2) {
-        if(!CheckTemplate(params.outfilename, 1)) // Delete user selected output filename template
-            params.outfilename[0] = '\0';
+    if(strlen(GLOBAL_params.outfilename) > 2) {
+        if(!CheckTemplate(GLOBAL_params.outfilename, 1)) // Delete user selected output filename template
+            GLOBAL_params.outfilename[0] = '\0';
     }
 
     // Check the first frame to determine template and frame sizes
     char fname1[256], fname2[256];
-    set_frame_filename_from_template(fname1, fname2, params.n_start, argv[argc - 1]);
-    if((whichtemplate = CheckFrames(fname1, fname2, &params.framewidth, &params.frameheight)) < 0) exit(-1);
-    if(params.debug) {
-        fprintf(stderr, "%s() - frame dimensions: %li × %li\n", argv[0], params.framewidth, params.frameheight);
-        fprintf(stderr, "%s() - Expect frame template %d\n", argv[0], whichtemplate + 1);
+    set_frame_filename_from_template(fname1, fname2, GLOBAL_params.n_start, argv[argc - 1]);
+    if((GLOBAL_whichtemplate = CheckFrames(fname1, fname2, &GLOBAL_params.framewidth, &GLOBAL_params.frameheight)) < 0) exit(-1);
+    if(GLOBAL_params.debug) {
+        fprintf(stderr, "%s() - frame dimensions: %li × %li\n", argv[0], GLOBAL_params.framewidth, GLOBAL_params.frameheight);
+        fprintf(stderr, "%s() - Expect frame template %d\n", argv[0], GLOBAL_whichtemplate + 1);
     }
 
-    if(params.outwidth < 0) {
-        params.outwidth = template[whichtemplate].equi_width;
-        params.outheight = params.outwidth / 2;
+    if(GLOBAL_params.outwidth < 0) {
+        GLOBAL_params.outwidth = GLOBAL_template[GLOBAL_whichtemplate].equi_width;
+        GLOBAL_params.outheight = GLOBAL_params.outwidth / 2;
     }
 
     load_lltable(argv[0]);
@@ -284,28 +283,28 @@ int main(int argc, char** argv) {
     init(argc, argv);
 
 
-    if(params.debug) fprintf(stderr, "%s() - Initializing threads\n", argv[0]);
+    if(GLOBAL_params.debug) fprintf(stderr, "%s() - Initializing threads\n", argv[0]);
 
-    params.threads = MIN(params.threads, params.n_stop);
+    GLOBAL_params.threads = MIN(GLOBAL_params.threads, GLOBAL_params.n_stop);
 
-    buffer_elem input_read_buffer_array[params.input_buffer_length];
+    buffer_elem input_read_buffer_array[GLOBAL_params.input_buffer_length];
 
     // initialize read-input-buffer
-    for(size_t i = 0; i < params.input_buffer_length; ++i) {
+    for(size_t i = 0; i < GLOBAL_params.input_buffer_length; ++i) {
         pthread_mutex_init(&input_read_buffer_array[i].mutex, NULL);
         input_read_buffer_array[i].waiting_for_stitch = FALSE;
-        input_read_buffer_array[i].frame_input1 = Create_Bitmap(params.framewidth, params.frameheight);
-        input_read_buffer_array[i].frame_input2 = Create_Bitmap(params.framewidth, params.frameheight);
+        input_read_buffer_array[i].frame_input1 = Create_Bitmap(GLOBAL_params.framewidth, GLOBAL_params.frameheight);
+        input_read_buffer_array[i].frame_input2 = Create_Bitmap(GLOBAL_params.framewidth, GLOBAL_params.frameheight);
     }
 
-    pthread_t thread_array[params.threads];
-    THREAD_DATA thread_data_array[params.threads];
+    pthread_t thread_array[GLOBAL_params.threads];
+    THREAD_DATA thread_data_array[GLOBAL_params.threads];
 
     pthread_mutex_t mutex_counter = PTHREAD_MUTEX_INITIALIZER;
     boolean input_exhausted = FALSE;
 
     // Initialize the thread thread_data_array
-    for(size_t thread_id = 0; thread_id < params.threads - 1; thread_id++) {
+    for(size_t thread_id = 0; thread_id < GLOBAL_params.threads - 1; thread_id++) {
         thread_data_array[thread_id].worker_id = thread_id;
         thread_data_array[thread_id].input_exhausted_mutex = &mutex_counter;
         thread_data_array[thread_id].input_exhausted = &input_exhausted;
@@ -319,41 +318,41 @@ int main(int argc, char** argv) {
     pthread_t image_reader_thread;
     int creating_thread_status = pthread_create(&(image_reader_thread), NULL, image_reader_worker_function, (void*)&thread_data_array[0]);
     if(creating_thread_status) {
-        if(params.debug) { fprintf(stderr, "Error creating image reading thread 00, exiting.\n"); }
+        if(GLOBAL_params.debug) { fprintf(stderr, "Error creating image reading thread 00, exiting.\n"); }
         exit(-1);
-    } else if(params.debug) {
-        if(params.debug) { fprintf(stderr, "%s() - Started image reading thread 00\n", argv[0]); }
+    } else if(GLOBAL_params.debug) {
+        if(GLOBAL_params.debug) { fprintf(stderr, "%s() - Started image reading thread 00\n", argv[0]); }
     }
 
-    if(params.debug) fprintf(stderr, "%s() - Starting threads\n", argv[0]);
+    if(GLOBAL_params.debug) fprintf(stderr, "%s() - Starting threads\n", argv[0]);
 
     // thread_id = 1, since id=0 thread_id is reserved for the image_reading_thread
-    for(size_t thread_id = 1; thread_id < params.threads; thread_id++) {
+    for(size_t thread_id = 1; thread_id < GLOBAL_params.threads; thread_id++) {
         // Malloc images (once, then reuse in the same thread)
         thread_data_array[thread_id].input = malloc(sizeof(buffer_elem));
         if(thread_data_array[thread_id].input == NULL) {
             fprintf(stderr, "%s() - Failed to malloc memory for the input buffer_elem\n", argv[0]);
             exit(-1);
         }
-        thread_data_array[thread_id].input->frame_input1 = Create_Bitmap(params.framewidth, params.frameheight);
-        thread_data_array[thread_id].input->frame_input2 = Create_Bitmap(params.framewidth, params.frameheight);
-        thread_data_array[thread_id].frame_spherical = Create_Bitmap(params.outwidth, params.outheight);
+        thread_data_array[thread_id].input->frame_input1 = Create_Bitmap(GLOBAL_params.framewidth, GLOBAL_params.frameheight);
+        thread_data_array[thread_id].input->frame_input2 = Create_Bitmap(GLOBAL_params.framewidth, GLOBAL_params.frameheight);
+        thread_data_array[thread_id].frame_spherical = Create_Bitmap(GLOBAL_params.outwidth, GLOBAL_params.outheight);
 
         int creating_thread_status = pthread_create(&(thread_array[thread_id]), NULL, image_processing_worker_function, (void*)&thread_data_array[thread_id]);
         if(creating_thread_status) {
-            if(params.debug) { fprintf(stderr, "Error creating thread %02li, exiting.\n", thread_id); }
+            if(GLOBAL_params.debug) { fprintf(stderr, "Error creating thread %02li, exiting.\n", thread_id); }
             exit(-1);
-        } else if(params.debug) {
-            if(params.debug) { fprintf(stderr, "%s() - Started t %02li\n", argv[0], thread_id); }
+        } else if(GLOBAL_params.debug) {
+            if(GLOBAL_params.debug) { fprintf(stderr, "%s() - Started t %02li\n", argv[0], thread_id); }
         }
 
-        if(params.threads > 1) {
+        if(GLOBAL_params.threads > 1) {
             // spread start of threads out a bit so compute and io time do not overlap at the start
-            usleep(1000.0 / (params.threads));
+            usleep(1000.0 / (GLOBAL_params.threads));
         }
     }
 
-    for(size_t thread_id = 0; thread_id < params.threads; ++thread_id) {
+    for(size_t thread_id = 0; thread_id < GLOBAL_params.threads; ++thread_id) {
         pthread_join(thread_array[thread_id], NULL);
 
         if(thread_data_array[thread_id].input != NULL) {
@@ -364,16 +363,16 @@ int main(int argc, char** argv) {
 
         Destroy_Bitmap(thread_data_array[thread_id].frame_spherical);
 
-        if(params.debug) { fprintf(stderr, "Thread: %02li done\n", thread_id); }
+        if(GLOBAL_params.debug) { fprintf(stderr, "Thread: %02li done\n", thread_id); }
     }
 
     // free all read-input-buffer images
-    for(size_t i = 0; i < params.input_buffer_length; ++i) {
+    for(size_t i = 0; i < GLOBAL_params.input_buffer_length; ++i) {
         Destroy_Bitmap(input_read_buffer_array[i].frame_input1);
         Destroy_Bitmap(input_read_buffer_array[i].frame_input2);
     }
 
-    free(g_lltable);
+    free(GLOBAL_lltable);
     exit(0);
 }
 
@@ -387,28 +386,28 @@ void set_frame_filename_from_template(char* fname1, char* fname2, int nframe, co
 // calculates spherical image from two input images
 void calc_spherical(BITMAP4* frame_input1, BITMAP4* frame_input2, BITMAP4* spherical_out) {
     int itable = 0;
-    for(int j = 0; j < params.outheight; ++j) {
+    for(int j = 0; j < GLOBAL_params.outheight; ++j) {
         //y0 = j / (double)params.outheight;
         //if (params.debug && j % (params.outheight/32) == 0)
         //fprintf(stderr,"%s() - Scan line %d\n",progName,j);
 
-        for(int i = 0; i < params.outwidth; ++i) {
+        for(int i = 0; i < GLOBAL_params.outwidth; ++i) {
             //x0 = i / (double)params.outwidth;
             COLOUR16 csum = { 0, 0, 0 }; // Supersampling antialising sum
 
             // Antialiasing loops
-            for(size_t aj = 0; aj < params.antialias; aj++) {
+            for(size_t aj = 0; aj < GLOBAL_params.antialias; aj++) {
                 //y = y0 + aj / dy; // 0 ... 1
 
                 // Antialiasing loops
-                for(size_t ai = 0; ai < params.antialias; ai++) {
+                for(size_t ai = 0; ai < GLOBAL_params.antialias; ai++) {
                     //x = x0 + ai / dx; // 0 ... 1
 
                     // Calculate latitude and longitude
                     //longitude = x * TWOPI - M_PI;    // -pi ... pi
                     //latitude = y * M_PI - M_PI/2;    // -pi/2 ... pi/2
-                    int face = g_lltable[itable].face;
-                    UV uv = g_lltable[itable].uv;
+                    int face = GLOBAL_lltable[itable].face;
+                    UV uv = GLOBAL_lltable[itable].uv;
                     itable++;
 
                     // Sum over the supersampling set
@@ -420,10 +419,10 @@ void calc_spherical(BITMAP4* frame_input1, BITMAP4* frame_input2, BITMAP4* spher
             }
 
             // Finally update the spherical image
-            int index = j * params.outwidth + i;
-            spherical_out[index].r = csum.r / params.antialias2;
-            spherical_out[index].g = csum.g / params.antialias2;
-            spherical_out[index].b = csum.b / params.antialias2;
+            int index = j * GLOBAL_params.outwidth + i;
+            spherical_out[index].r = csum.r / GLOBAL_params.antialias2;
+            spherical_out[index].g = csum.g / GLOBAL_params.antialias2;
+            spherical_out[index].b = csum.b / GLOBAL_params.antialias2;
         }
     }
 }
@@ -435,26 +434,26 @@ int read_image_pair(const int nframe, THREAD_DATA* data) {
     set_frame_filename_from_template(fname1, fname2, nframe, data->last_argument);
 
     // skip calculation of frame if output file exists
-    if(params.skip_existing) {
+    if(GLOBAL_params.skip_existing) {
         // Create the output file name
         char fname_out[256];
         create_output_filename(fname_out, fname1, nframe);
 
         if(access(fname_out, F_OK) == 0) {
-            if(params.debug) { fprintf(stderr, "%s() T%02li - skipping frame, already exists \"%s\"\n", data->progName, data->worker_id, fname_out); }
+            if(GLOBAL_params.debug) { fprintf(stderr, "%s() T%02li - skipping frame, already exists \"%s\"\n", data->progName, data->worker_id, fname_out); }
             return 10;
-        } else if(params.debug) {
+        } else if(GLOBAL_params.debug) {
             fprintf(stderr, "%s() T%02li - NOT skipping frame \"%s\"\n", data->progName, data->worker_id, fname_out);
         }
     }
 
-    if(!ReadFrame(data->input->frame_input1, fname1, &params.framewidth, &params.frameheight)) {
-        if(params.debug) fprintf(stderr, "%s() T%02li - failed to read frame \"%s\"\n", data->progName, data->worker_id, fname2);
+    if(!ReadFrame(data->input->frame_input1, fname1, &GLOBAL_params.framewidth, &GLOBAL_params.frameheight)) {
+        if(GLOBAL_params.debug) fprintf(stderr, "%s() T%02li - failed to read frame \"%s\"\n", data->progName, data->worker_id, fname2);
         return 1;
     }
 
-    if(!ReadFrame(data->input->frame_input2, fname2, &params.framewidth, &params.frameheight)) {
-        if(params.debug) fprintf(stderr, "%s() T%02li - failed to read frame \"%s\"\n", data->progName, data->worker_id, fname2);
+    if(!ReadFrame(data->input->frame_input2, fname2, &GLOBAL_params.framewidth, &GLOBAL_params.frameheight)) {
+        if(GLOBAL_params.debug) fprintf(stderr, "%s() T%02li - failed to read frame \"%s\"\n", data->progName, data->worker_id, fname2);
         return 2;
     }
 
@@ -464,27 +463,27 @@ int read_image_pair(const int nframe, THREAD_DATA* data) {
 
 void process_single_image(THREAD_DATA* data) {
     size_t nframe = take_image_pair_from_buffer(data);
-    if(params.debug) { fprintf(stderr, "%s() T%02li - starting job %li\n", data->progName, data->worker_id, nframe); }
+    if(GLOBAL_params.debug) { fprintf(stderr, "%s() T%02li - starting job %li\n", data->progName, data->worker_id, nframe); }
 
     // Form the spherical map
-    if(params.debug) {
+    if(GLOBAL_params.debug) {
         fprintf(stderr, "%s() T%02li - Creating spherical map for frame %li\n", data->progName, data->worker_id, nframe);
 
         BITMAP4 black = { 0, 0, 0, 255 };
-        Erase_Bitmap(data->frame_spherical, params.outwidth, params.outheight, black);
+        Erase_Bitmap(data->frame_spherical, GLOBAL_params.outwidth, GLOBAL_params.outheight, black);
     }
 
     double starttime = GetRunTime();
     calc_spherical(data->input->frame_input1, data->input->frame_input2, data->frame_spherical);
-    if(params.debug) { fprintf(stderr, "%s() T%02li - Processing time: %g seconds\n", data->progName, data->worker_id, GetRunTime() - starttime); }
+    if(GLOBAL_params.debug) { fprintf(stderr, "%s() T%02li - Processing time: %g seconds\n", data->progName, data->worker_id, GetRunTime() - starttime); }
 
     // Write out the equirectangular
     char fname1[256], fname2[256];
     set_frame_filename_from_template(fname1, fname2, nframe, data->last_argument);
     // Base the name on the name of the first frame
-    if(params.debug) fprintf(stderr, "%s() T%02li - Saving equirectangular\n", data->progName, data->worker_id);
-    WriteSpherical(fname1, nframe, data->frame_spherical, params.outwidth, params.outheight);
-    if(params.debug) { fprintf(stderr, "%s() T%02li - finished job %li\n", data->progName, data->worker_id, nframe); }
+    if(GLOBAL_params.debug) fprintf(stderr, "%s() T%02li - Saving equirectangular\n", data->progName, data->worker_id);
+    WriteSpherical(fname1, nframe, data->frame_spherical, GLOBAL_params.outwidth, GLOBAL_params.outheight);
+    if(GLOBAL_params.debug) { fprintf(stderr, "%s() T%02li - finished job %li\n", data->progName, data->worker_id, nframe); }
 }
 
 
@@ -506,7 +505,7 @@ int CheckFrames(const char* fname1, const char* fname2, size_t* width, size_t* h
         return (-1);
     }
 
-    if(params.debug) fprintf(stderr, "fname1=%s fname2=%s\n", fname1, fname2);
+    if(GLOBAL_params.debug) fprintf(stderr, "fname1=%s fname2=%s\n", fname1, fname2);
 
     FILE* fptr;
     // Frame 1
@@ -545,7 +544,7 @@ int CheckFrames(const char* fname1, const char* fname2, size_t* width, size_t* h
     int template_n = -1;
     // Is it a known template?
     for(int i = 0; i < NTEMPLATE; i++) {
-        if(w1 == template[i].width && h1 == template[i].height) {
+        if(w1 == GLOBAL_template[i].width && h1 == GLOBAL_template[i].height) {
             template_n = i;
             break;
         }
@@ -563,7 +562,7 @@ int CheckFrames(const char* fname1, const char* fname2, size_t* width, size_t* h
 
 // params.skip_existing
 void create_output_filename(char* fname_out, const char* basename, int nframe) {
-    if(strlen(params.outfilename) < 2) {
+    if(strlen(GLOBAL_params.outfilename) < 2) {
         sprintf(fname_out, basename, 0, nframe);
         for(int i = strlen(fname_out) - 1; i > 0; i--) {
             if(fname_out[i] == '.') {
@@ -573,7 +572,7 @@ void create_output_filename(char* fname_out, const char* basename, int nframe) {
         }
         strcat(fname_out, "_sphere.png");
     } else {
-        sprintf(fname_out, params.outfilename, nframe);
+        sprintf(fname_out, GLOBAL_params.outfilename, nframe);
     }
 }
 
@@ -588,7 +587,7 @@ int WriteSpherical(const char* basename, int nframe, const BITMAP4* img, int w, 
     char fname_out[256];
     create_output_filename(fname_out, basename, nframe);
 
-    if(params.debug) fprintf(stderr, "WriteSpherical() - Saving file \"%s\"\n", fname_out);
+    if(GLOBAL_params.debug) fprintf(stderr, "WriteSpherical() - Saving file \"%s\"\n", fname_out);
 
     // Save
     FILE* fptr;
@@ -609,7 +608,7 @@ int WriteSpherical(const char* basename, int nframe, const BITMAP4* img, int w, 
 int ReadFrame(BITMAP4* img, char* fname, size_t* w_out, size_t* h_out) {
     FILE* fptr;
 
-    if(params.debug) fprintf(stderr, "ReadFrame() - Reading image \"%s\"\n", fname);
+    if(GLOBAL_params.debug) fprintf(stderr, "ReadFrame() - Reading image \"%s\"\n", fname);
 
     // Attempt to open file
     if((fptr = fopen(fname, "rb")) == NULL) {
@@ -645,14 +644,14 @@ int FindFaceUV(double longitude, double latitude, UV* uv) {
 
     // Find which face the vector intersects
     for(k = 0; k < 6; k++) {
-        denom = -(params.faces[k].a * p.x + params.faces[k].b * p.y + params.faces[k].c * p.z);
+        denom = -(GLOBAL_params.faces[k].a * p.x + GLOBAL_params.faces[k].b * p.y + GLOBAL_params.faces[k].c * p.z);
 
         // Is p parallel to face? Shouldn't ever happen.
         //if (ABS(denom) < 0.000001)
         //   continue;
 
         // Find position q along ray and ignore intersections on the back pointing ray?
-        if((mu = params.faces[k].d / denom) < 0) continue;
+        if((mu = GLOBAL_params.faces[k].d / denom) < 0) continue;
         q.x = mu * p.x;
         q.y = mu * p.y;
         q.z = mu * p.z;
@@ -753,37 +752,37 @@ BITMAP4 GetColour(int face, UV uv, BITMAP4* frame1, BITMAP4* frame2) {
     // Frame 1
     case FRONT:
     case BACK:
-        x0 = template[whichtemplate].sidewidth;
-        w = template[whichtemplate].centerwidth;
+        x0 = GLOBAL_template[GLOBAL_whichtemplate].sidewidth;
+        w = GLOBAL_template[GLOBAL_whichtemplate].centerwidth;
         ix = x0 + uv.u * w;
-        iy = uv.v * template[whichtemplate].height;
-        index = iy * template[whichtemplate].width + ix;
+        iy = uv.v * GLOBAL_template[GLOBAL_whichtemplate].height;
+        index = iy * GLOBAL_template[GLOBAL_whichtemplate].width + ix;
         c = (face == FRONT) ? frame1[index] : frame2[index];
         break;
     case LEFT:
     case DOWN:
-        w = template[whichtemplate].sidewidth;
-        duv = template[whichtemplate].blendwidth / (double)w;
+        w = GLOBAL_template[GLOBAL_whichtemplate].sidewidth;
+        duv = GLOBAL_template[GLOBAL_whichtemplate].blendwidth / (double)w;
         uvleft.u = 2.0 * (0.5 - duv) * uv.u;
         uvright.u = 2.0 * (0.5 - duv) * (uv.u - 0.5) + 0.5 + duv;
         if(uvleft.u <= 0.5 - 2.0 * duv) {
             ix = uvleft.u * w;
-            iy = uvleft.v * template[whichtemplate].height;
-            index = iy * template[whichtemplate].width + ix;
+            iy = uvleft.v * GLOBAL_template[GLOBAL_whichtemplate].height;
+            index = iy * GLOBAL_template[GLOBAL_whichtemplate].width + ix;
             c = (face == LEFT) ? frame1[index] : frame2[index];
         } else if(uvright.u >= 0.5 + 2.0 * duv) {
             ix = uvright.u * w;
-            iy = uvright.v * template[whichtemplate].height;
-            index = iy * template[whichtemplate].width + ix;
+            iy = uvright.v * GLOBAL_template[GLOBAL_whichtemplate].height;
+            index = iy * GLOBAL_template[GLOBAL_whichtemplate].width + ix;
             c = (face == LEFT) ? frame1[index] : frame2[index];
         } else {
             ix = uvleft.u * w;
-            iy = uvleft.v * template[whichtemplate].height;
-            index = iy * template[whichtemplate].width + ix;
+            iy = uvleft.v * GLOBAL_template[GLOBAL_whichtemplate].height;
+            index = iy * GLOBAL_template[GLOBAL_whichtemplate].width + ix;
             c1 = (face == LEFT) ? frame1[index] : frame2[index];
             ix = uvright.u * w;
-            iy = uvright.v * template[whichtemplate].height;
-            index = iy * template[whichtemplate].width + ix;
+            iy = uvright.v * GLOBAL_template[GLOBAL_whichtemplate].height;
+            index = iy * GLOBAL_template[GLOBAL_whichtemplate].width + ix;
             c2 = (face == LEFT) ? frame1[index] : frame2[index];
             alpha = (uvleft.u - 0.5 + 2.0 * duv) / (2.0 * duv);
             c = ColourBlend(c1, c2, alpha);
@@ -791,29 +790,29 @@ BITMAP4 GetColour(int face, UV uv, BITMAP4* frame1, BITMAP4* frame2) {
         break;
     case RIGHT:
     case TOP:
-        x0 = template[whichtemplate].sidewidth + template[whichtemplate].centerwidth;
-        w = template[whichtemplate].sidewidth;
-        duv = template[whichtemplate].blendwidth / (double)w;
+        x0 = GLOBAL_template[GLOBAL_whichtemplate].sidewidth + GLOBAL_template[GLOBAL_whichtemplate].centerwidth;
+        w = GLOBAL_template[GLOBAL_whichtemplate].sidewidth;
+        duv = GLOBAL_template[GLOBAL_whichtemplate].blendwidth / (double)w;
         uvleft.u = 2.0 * (0.5 - duv) * uv.u;
         uvright.u = 2.0 * (0.5 - duv) * (uv.u - 0.5) + 0.5 + duv;
         if(uvleft.u <= 0.5 - 2.0 * duv) {
             ix = x0 + uvleft.u * w;
-            iy = uv.v * template[whichtemplate].height;
-            index = iy * template[whichtemplate].width + ix;
+            iy = uv.v * GLOBAL_template[GLOBAL_whichtemplate].height;
+            index = iy * GLOBAL_template[GLOBAL_whichtemplate].width + ix;
             c = (face == RIGHT) ? frame1[index] : frame2[index];
         } else if(uvright.u >= 0.5 + 2.0 * duv) {
             ix = x0 + uvright.u * w;
-            iy = uvright.v * template[whichtemplate].height;
-            index = iy * template[whichtemplate].width + ix;
+            iy = uvright.v * GLOBAL_template[GLOBAL_whichtemplate].height;
+            index = iy * GLOBAL_template[GLOBAL_whichtemplate].width + ix;
             c = (face == RIGHT) ? frame1[index] : frame2[index];
         } else {
             ix = x0 + uvleft.u * w;
-            iy = uvleft.v * template[whichtemplate].height;
-            index = iy * template[whichtemplate].width + ix;
+            iy = uvleft.v * GLOBAL_template[GLOBAL_whichtemplate].height;
+            index = iy * GLOBAL_template[GLOBAL_whichtemplate].width + ix;
             c1 = (face == RIGHT) ? frame1[index] : frame2[index];
             ix = x0 + uvright.u * w;
-            iy = uvright.v * template[whichtemplate].height;
-            index = iy * template[whichtemplate].width + ix;
+            iy = uvright.v * GLOBAL_template[GLOBAL_whichtemplate].height;
+            index = iy * GLOBAL_template[GLOBAL_whichtemplate].width + ix;
             c2 = (face == RIGHT) ? frame1[index] : frame2[index];
             alpha = (uvleft.u - 0.5 + 2.0 * duv) / (2.0 * duv);
             c = ColourBlend(c1, c2, alpha);
@@ -856,50 +855,50 @@ void RotateUV90(UV* uv) {
     Initialise parameters structure
 */
 void init_default_params(void) {
-    params.outwidth = -1;
-    params.outheight = -1;
-    params.framewidth = -1;
-    params.frameheight = -1;
-    params.antialias = 2;
-    params.antialias2 = 4; // antialias squared
-    params.n_start = 0;
-    params.n_stop = 100000;
-    params.outfilename[0] = '\0';
-    params.debug = FALSE;
-    params.threads = MAX(1, sysconf(_SC_NPROCESSORS_ONLN)) + 1; // +1 for the image reading thread
-    params.skip_existing = TRUE;
-    params.input_buffer_length = 1;
+    GLOBAL_params.outwidth = -1;
+    GLOBAL_params.outheight = -1;
+    GLOBAL_params.framewidth = -1;
+    GLOBAL_params.frameheight = -1;
+    GLOBAL_params.antialias = 2;
+    GLOBAL_params.antialias2 = 4; // antialias squared
+    GLOBAL_params.n_start = 0;
+    GLOBAL_params.n_stop = 100000;
+    GLOBAL_params.outfilename[0] = '\0';
+    GLOBAL_params.debug = FALSE;
+    GLOBAL_params.threads = MAX(1, sysconf(_SC_NPROCESSORS_ONLN)) + 1; // +1 for the image reading thread
+    GLOBAL_params.skip_existing = TRUE;
+    GLOBAL_params.input_buffer_length = 1;
 
     // Parameters for the 6 cube planes, ax + by + cz + d = 0
-    params.faces[LEFT].a = -1;
-    params.faces[LEFT].b = 0;
-    params.faces[LEFT].c = 0;
-    params.faces[LEFT].d = -1;
+    GLOBAL_params.faces[LEFT].a = -1;
+    GLOBAL_params.faces[LEFT].b = 0;
+    GLOBAL_params.faces[LEFT].c = 0;
+    GLOBAL_params.faces[LEFT].d = -1;
 
-    params.faces[RIGHT].a = 1;
-    params.faces[RIGHT].b = 0;
-    params.faces[RIGHT].c = 0;
-    params.faces[RIGHT].d = -1;
+    GLOBAL_params.faces[RIGHT].a = 1;
+    GLOBAL_params.faces[RIGHT].b = 0;
+    GLOBAL_params.faces[RIGHT].c = 0;
+    GLOBAL_params.faces[RIGHT].d = -1;
 
-    params.faces[TOP].a = 0;
-    params.faces[TOP].b = 0;
-    params.faces[TOP].c = 1;
-    params.faces[TOP].d = -1;
+    GLOBAL_params.faces[TOP].a = 0;
+    GLOBAL_params.faces[TOP].b = 0;
+    GLOBAL_params.faces[TOP].c = 1;
+    GLOBAL_params.faces[TOP].d = -1;
 
-    params.faces[DOWN].a = 0;
-    params.faces[DOWN].b = 0;
-    params.faces[DOWN].c = -1;
-    params.faces[DOWN].d = -1;
+    GLOBAL_params.faces[DOWN].a = 0;
+    GLOBAL_params.faces[DOWN].b = 0;
+    GLOBAL_params.faces[DOWN].c = -1;
+    GLOBAL_params.faces[DOWN].d = -1;
 
-    params.faces[FRONT].a = 0;
-    params.faces[FRONT].b = 1;
-    params.faces[FRONT].c = 0;
-    params.faces[FRONT].d = -1;
+    GLOBAL_params.faces[FRONT].a = 0;
+    GLOBAL_params.faces[FRONT].b = 1;
+    GLOBAL_params.faces[FRONT].c = 0;
+    GLOBAL_params.faces[FRONT].d = -1;
 
-    params.faces[BACK].a = 0;
-    params.faces[BACK].b = -1;
-    params.faces[BACK].c = 0;
-    params.faces[BACK].d = -1;
+    GLOBAL_params.faces[BACK].a = 0;
+    GLOBAL_params.faces[BACK].b = -1;
+    GLOBAL_params.faces[BACK].c = 0;
+    GLOBAL_params.faces[BACK].d = -1;
 }
 
 /*
@@ -952,15 +951,15 @@ void GiveUsage(char* s) {
     fprintf(stderr, "   %s -w 4096 -n 1 -m 1000 track%%d/frame%%4d.png\n", s);
     fprintf(stderr, "\n");
     fprintf(stderr, "Options\n");
-    fprintf(stderr, "   -w n      Sets the output image width,      default: %d\n", params.outwidth);
-    fprintf(stderr, "   -a n      Sets antialiasing level,          default: %li\n", params.antialias);
+    fprintf(stderr, "   -w n      Sets the output image width,      default: %d\n", GLOBAL_params.outwidth);
+    fprintf(stderr, "   -a n      Sets antialiasing level,          default: %li\n", GLOBAL_params.antialias);
     fprintf(stderr,
             "   -o s      Specify the output filename template, default is based on track 0 name uses track 2. If "
             "specified then it should contain one %%d field for the frame number\n");
-    fprintf(stderr, "   -n n      Start index for the sequence,     default: %li\n", params.n_start);
-    fprintf(stderr, "   -m n      End index for the sequence,       default: %li\n", params.n_stop);
-    fprintf(stderr, "   -t n      Amount of threads to use,         default: %li\n", params.threads);
+    fprintf(stderr, "   -n n      Start index for the sequence,     default: %li\n", GLOBAL_params.n_start);
+    fprintf(stderr, "   -m n      End index for the sequence,       default: %li\n", GLOBAL_params.n_stop);
+    fprintf(stderr, "   -t n      Amount of threads to use,         default: %li\n", GLOBAL_params.threads);
     fprintf(stderr, "   -d        Enable debug mode,                default: off\n");
     fprintf(stderr, "   -F        Overwrite existing output images, default: off\n");
-    fprintf(stderr, "   -b        Set input buffer length,          default: %li\n", params.input_buffer_length);
+    fprintf(stderr, "   -b        Set input buffer length,          default: %li\n", GLOBAL_params.input_buffer_length);
 }
