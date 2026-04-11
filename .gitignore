@@ -1,9 +1,32 @@
 # OS or Editor folders
 .DS_Store
 *.o
+*.so
 max2sphere
 *.data
-.vscode
 testframes
 track*
 out
+
+
+# all directories herein
+**/
+# especially all dot-dirs
+.**/
+
+.idea*
+
+*.csv
+*.html
+*.json
+
+__pycache__
+pre-commit-patches
+
+.*.pkl
+*.bak
+
+*.py.log
+.vscode
+*.lprof
+*.prof

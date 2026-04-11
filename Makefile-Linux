@@ -17,6 +17,9 @@ max2sphere.o: max2sphere.c max2sphere.h
 bitmaplib.o: bitmaplib.c bitmaplib.h
 	$(CC) $(INCLUDES) $(CFLAGS) -c bitmaplib.c
 
+libmax2sphere.so: $(OBJS)
+	$(CC) $(INCLUDES) $(CFLAGS) -shared -o libmax2sphere.so $(OBJS) $(LFLAGS) $(LIBS)
+
 clean:
 	rm -rf core max2sphere $(OBJS)
 
