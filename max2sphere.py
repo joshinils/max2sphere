@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 
+import sys
+
 import numpy as np
 import numpy.typing as npt
 import ctypes
-from typing import Any
 
 _max2sphere = ctypes.CDLL('./libmax2sphere.so')
 
@@ -24,6 +25,19 @@ _max2sphere.calc_spherical.argtypes = (
     ctypes.POINTER(BITMAP4),
 )
 _max2sphere.calc_spherical.restype = None
+
+
+# void init_for_calc_spherical(int width, int height, int outwidth, int antialias, const char* argv0)
+_max2sphere.init_for_calc_spherical.argtypes = (
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_char_p,
+)
+_max2sphere.init_for_calc_spherical.restype = None
+
+_max2sphere.init_for_calc_spherical(4096, 1344, 4096, 2, sys.argv[0].encode('utf-8'))
 
 
 def calc_spherical(
@@ -71,10 +85,19 @@ def calc_spherical(
         else:
             raise ValueError("count is required when input objects do not expose length")
 
-    # allocate zero-initialized output buffer of BITMAP4 elements
+    # allocate output buffer of BITMAP4 elements
     # output size: 4096 × 2048
-    spherical_array = np.empty((4096, 2048, 4), dtype=np.uint8)
-    spherical_ptr = _as_ptr_and_len(spherical_array)[0]
+    spherical_array = np.empty((2048, 4096, 4), dtype=np.uint8)
+    # initialize to known "random" data for testing
+    spherical_array[:] = np.random.randint(0, 256, size=(2048, 4096, 4), dtype=np.uint8)
 
+    before = spherical_array.copy()
+
+    print(f" pre: {(before == spherical_array).all()} {before is spherical_array=}")
+
+    spherical_ptr = _as_ptr_and_len(spherical_array)[0]
     _max2sphere.calc_spherical(ptr1, ptr2, spherical_ptr)
+
+    print(f"post: {(before == spherical_array).all()} {before is spherical_array=}")
+
     return spherical_array
