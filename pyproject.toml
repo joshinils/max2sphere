@@ -1,16 +1,16 @@
 # Documents
 
 [tool.black]
-line_length = 300
-line-length = 300
-wrap_length = 300
+# line_length = 198
+line-length = 198
+# wrap_length = 198
 check = true
 diff = true
-color = false
+color = true
 verbose = false
 
 [tool.pylint]
-max-line-length = 300
+max-line-length = 198
 jobs = 0
 persistent = true
 # suggestion-mode = true

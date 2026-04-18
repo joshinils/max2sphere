@@ -60,7 +60,9 @@ typedef struct {
 typedef struct SPHERICAL_CONTEXT {
     PARAMS params;
     LLTABLE* lltable;
+    int lltable_length;
     int ntable;
+    char lltable_filename[256];
     int whichtemplate;
     boolean is_initialized;
 } SPHERICAL_CONTEXT;
@@ -106,7 +108,7 @@ BITMAP4 GetColour(int face, UV uv, BITMAP4* frame1, BITMAP4* frame2);
 int CheckTemplate(char*, int);
 
 SPHERICAL_CONTEXT* GetSphericalContext();
-SPHERICAL_CONTEXT* GetSphericalContext_(const char* caller);
+SPHERICAL_CONTEXT* _GetSphericalContext(const char* caller);
 SPHERICAL_CONTEXT* CreateSphericalContext();
 void DestroySphericalContext();
 int LoadLookupTable(const char* progName);

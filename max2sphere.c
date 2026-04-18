@@ -10,10 +10,27 @@
     Dec  14: This version which is a batch converter based upon a lookup table
 */
 
+#define lltable_filename_chars 256
+
+
 // These are known frame templates
 // The appropriate one to use will be auto detected, error is none match
 #define NTEMPLATE 2
-const FRAMESPECS const_global_template[NTEMPLATE] = { { 4096, 1344, 1376, 1344, 32, 5376 }, { 2272, 736, 768, 736, 16, 2944 } };
+const FRAMESPECS const_global_template[NTEMPLATE] = {
+    {
+        4096, 1344,  // width, height
+        1376,        // sidewidth
+        1344,        // centerwidth
+          32,        // blendwidth
+        5376         // equi_width
+    }, {
+        2272,  736,  // width, height
+         768,        // sidewidth
+         736,        // centerwidth
+          16,        // blendwidth
+        2944         // equi_width
+    }
+};
 
 
 /*
@@ -29,6 +46,7 @@ SPHERICAL_CONTEXT* CreateSphericalContext() {
     init_default_params(ctx);
 
     ctx->lltable = NULL;
+    ctx->lltable_filename[0] = '\0';
     ctx->ntable = -1;
     ctx->whichtemplate = -1; // Which frame template do we think we have
     return ctx;
@@ -39,7 +57,7 @@ SPHERICAL_CONTEXT* GLOBAL_ctx = NULL;
 /*
     Check if spherical context exists, create if not
 */
-SPHERICAL_CONTEXT* GetSphericalContext_(const char* caller) {
+SPHERICAL_CONTEXT* _GetSphericalContext(const char* caller) {
     if (caller != NULL) {
         printf("    %s:%05i %s - called by %s\n", __FILE__, __LINE__, __FUNCTION__, caller);
     } else {
@@ -57,7 +75,7 @@ SPHERICAL_CONTEXT* GetSphericalContext_(const char* caller) {
 }
 SPHERICAL_CONTEXT* GetSphericalContext()
 {
-    return GetSphericalContext_(NULL);
+    return _GetSphericalContext(NULL);
 }
 /*
     Release the resources associated with a spherical conversion context.
@@ -69,6 +87,10 @@ void DestroySphericalContext() {
     GLOBAL_ctx = NULL;
 }
 
+void get_lltable_name(char* tablename, SPHERICAL_CONTEXT* ctx){
+    sprintf(tablename, ".lltable_tpl-%d_wd-%d_hg-%d_aa-%li.data", ctx->whichtemplate, ctx->params.outwidth, ctx->params.outheight, ctx->params.antialias);
+}
+
 /*
     Load or generate the lookup table required for equirectangular projection.
 */
@@ -78,18 +100,31 @@ int LoadLookupTable(const char* progName) {
 
     if(ctx == NULL) { return -1; }
 
+
+    char new_tablename[lltable_filename_chars];
+    get_lltable_name(new_tablename, ctx);
+
+    if(
+        strcmp(ctx->lltable_filename, new_tablename) == 0
+        &&
+        ctx->lltable != NULL
+    ) {
+        // same table already initialized and loaded
+        return 0;
+    }
+
+    strncpy(ctx->lltable_filename, new_tablename, lltable_filename_chars);
+
     ctx->ntable = ctx->params.outheight * ctx->params.outwidth * ctx->params.antialias * ctx->params.antialias;
     ctx->lltable = malloc(ctx->ntable * sizeof(LLTABLE));
     if(ctx->lltable == NULL) { return -1; }
 
-    char tablename[256];
-    sprintf(tablename, "%d_%d_%d_%li.data", ctx->whichtemplate, ctx->params.outwidth, ctx->params.outheight, ctx->params.antialias);
     FILE* fptr;
     int n = 0;
-    if((fptr = fopen(tablename, "r")) != NULL) {
+    if((fptr = fopen(ctx->lltable_filename, "r")) != NULL) {
         if(ctx->params.debug) { fprintf(stderr, "%s() - Reading lookup table\n", progName); }
         if((n = fread(ctx->lltable, sizeof(LLTABLE), ctx->ntable, fptr)) != ctx->ntable) {
-            fprintf(stderr, "%s() - Failed to read lookup table \"%s\" (%d != %d)\n", progName, tablename, n, ctx->ntable);
+            fprintf(stderr, "%s() - Failed to read lookup table \"%s\" (%d != %d)\n", progName, ctx->lltable_filename, n, ctx->ntable);
         }
         fclose(fptr);
     }
@@ -116,7 +151,7 @@ int LoadLookupTable(const char* progName) {
             }
         }
         if(ctx->params.debug) { fprintf(stderr, "%s() - Saving lookup table\n", progName); }
-        fptr = fopen(tablename, "w");
+        fptr = fopen(new_tablename, "w");
         fwrite(ctx->lltable, ctx->ntable, sizeof(LLTABLE), fptr);
         fclose(fptr);
     }

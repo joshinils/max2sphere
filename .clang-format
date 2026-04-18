@@ -31,7 +31,7 @@ AlwaysBreakAfterReturnType: None
 CommentPragmas:  '^[^ ]'
 
 #https://stackoverflow.com/questions/39858266/using-clang-format-keep-empty-braces-on-the-same-line
-BreakBeforeBraces: Allman
+# BreakBeforeBraces: Allman
 BreakBeforeBraces: Custom
 BraceWrapping:
   AfterCaseLabel: false

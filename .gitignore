@@ -30,3 +30,6 @@ pre-commit-patches
 .vscode
 *.lprof
 *.prof
+
+# Jupyter notebooks, used for testing stuff, not part of the project
+*.ipynb
