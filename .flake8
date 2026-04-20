@@ -1,0 +1,9 @@
+[flake8]
+max_line_length=300
+in-place = true
+ignore=
+    W503,
+    ; ignore old opposite of W504
+
+    W391
+    ; cause django generates empty files with two empty lines...

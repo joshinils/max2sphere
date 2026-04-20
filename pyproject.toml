@@ -1,0 +1,45 @@
+# Documents
+
+[tool.black]
+# line_length = 198
+line-length = 198
+# wrap_length = 198
+check = true
+diff = true
+color = true
+verbose = false
+
+[tool.pylint]
+max-line-length = 198
+jobs = 0
+persistent = true
+# suggestion-mode = true
+enable = [
+    "raw-checker-failed",
+    "bad-inline-option",
+    "locally-disabled",
+    "file-ignored",
+    "suppressed-message",
+    "useless-suppression",
+    "deprecated-pragma",
+    # "use-implicit-booleaness-not-comparison-to-string",
+    # "use-implicit-booleaness-not-comparison-to-zero",
+    "use-symbolic-message-instead",
+] # idk, was in the generated file as disable, let's see what they do
+notes = ["FIXME", "XXX", "TODO", "todo", "fix", "fixme", "xxx", "FIX"]
+disable = ["invalid-name"]
+
+[tool.pyright]
+reportMissingTypeStubs = false
+reportUnknownMemberTypes = false
+reportUnknownVariableType = false
+reportUnknownVariableTypes = false
+
+
+[tool.pytest.ini_options]
+pythonpath = [
+  "."
+]
+
+[mypy]
+plugins = "numpy.typing.mypy_plugin"
